@@ -15,6 +15,9 @@ a project and select a conversation to open it directly in Chats. Use **Rede**
 to connect computers on a private Tailscale network and view their task status.
 See the [desktop update guide](docs/getting-started.md#update-an-existing-windows-installation).
 
+**Windows x64:** [Bento Workspace 0.6.7 updater and checksum](https://github.com/b3mdev/mr-mak-workspace/tree/dist/windows-v0.6.7)
+for an existing Mr. Mak Workspace or Bento Workspace 0.6.6 installation.
+
 Keep the windows side by side, or minimize either one independently. You can
 leave Chats in view while working in Blender, a game engine or your browser.
 
