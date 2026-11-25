@@ -7,6 +7,7 @@ import { contentUrl } from '../desktop/client'
 import MakLogo from './MakLogo'
 import MakText from './MakText'
 import { EntityStatusButton } from './EntityControls'
+import { localizeCategory, useT } from '../lib/i18n'
 
 interface SidebarProps {
   pinned: WorkspaceEntity[]
@@ -58,6 +59,7 @@ export default function Sidebar({
   lastSync,
   onCollapse,
 }: SidebarProps) {
+  const { lang, t, time } = useT()
   const empty = pinned.length === 0 && grouped.size === 0
 
   return (
@@ -70,8 +72,8 @@ export default function Sidebar({
         <button
           className="sidebar-collapse"
           onClick={onCollapse}
-          title="Hide menu ( [ )"
-          aria-label="Hide menu"
+          title={t('workspace.hideMenuTitle')}
+          aria-label={t('workspace.hideMenu')}
         >
           ‹
         </button>
@@ -91,11 +93,11 @@ export default function Sidebar({
               ev.currentTarget.blur()
             }
           }}
-          placeholder="Search…  ( / )"
-          aria-label="Search entities"
+          placeholder={t('workspace.searchPlaceholder')}
+          aria-label={t('workspace.searchAria')}
         />
         {query && (
-          <button className="search-clear" onClick={() => onQuery('')} aria-label="Clear search">
+          <button className="search-clear" onClick={() => onQuery('')} aria-label={t('workspace.clearSearch')}>
             ×
           </button>
         )}
@@ -105,7 +107,7 @@ export default function Sidebar({
         {pinned.length > 0 && (
           <div>
             <div className="sidebar-section">
-              <span className="sidebar-label">{'\u{1F4CC}'} pinned</span>
+              <span className="sidebar-label">{'\u{1F4CC}'} {t('workspace.pinned')}</span>
             </div>
             {pinned.map(e => (
               <Item key={e.id} entity={e} active={e.id === activeId} />
@@ -116,7 +118,7 @@ export default function Sidebar({
         {[...grouped.entries()].map(([cat, list]) => (
           <div key={cat}>
             <div className="sidebar-section">
-              <span className="sidebar-label">{cat.replace(/-/g, ' ')}</span>
+              <span className="sidebar-label">{cat === 'by date' ? t('workspace.byDate') : localizeCategory(lang, cat)}</span>
               <span className="sidebar-count">{list.length}</span>
             </div>
             {list.map(e => (
@@ -125,13 +127,13 @@ export default function Sidebar({
           </div>
         ))}
 
-        {empty && <div className="sidebar-empty">Nothing matches, sir.</div>}
+        {empty && <div className="sidebar-empty">{t('workspace.sidebarEmpty')}</div>}
 
         {archivedCount > 0 && !query && (
           <button className="sidebar-archive-toggle" onClick={onToggleArchived}>
             {showArchived
-              ? `▼ Hide archive (${archivedCount})`
-              : `▶ Show archive (${archivedCount})`}
+              ? t('workspace.hideArchive', { count: archivedCount })
+              : t('workspace.showArchive', { count: archivedCount })}
           </button>
         )}
       </nav>
@@ -139,12 +141,12 @@ export default function Sidebar({
       <footer className="sidebar-foot">
         <span className={`sync-dot${offline ? ' offline' : ''}`} />
         <span>
-          {total} entities ·{' '}
+          {t('workspace.entitiesCount', { count: total })} ·{' '}
           {offline
-            ? 'offline'
+            ? t('workspace.offline')
             : lastSync
-              ? `synced ${lastSync.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-              : 'syncing…'}
+              ? t('workspace.syncedAt', { time: time(lastSync) })
+              : t('workspace.syncing')}
         </span>
       </footer>
     </aside>

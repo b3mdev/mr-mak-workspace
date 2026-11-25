@@ -1,4 +1,5 @@
 import type { ThemePreference } from '../../desktop/service/appearance.mjs'
+import type { UiLanguage } from '../../desktop/service/language.mjs'
 
 export type AgentId = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'kimi' | 'shell'
 export type Effort = 'medium' | 'high' | 'xhigh' | 'max'
@@ -29,7 +30,7 @@ export interface ProjectGallery { projects: GalleryProject[]; covers: Record<str
 export interface Handoff { status: 'summarizing' | 'opening' | 'done' | 'failed'; error?: string | null; sessionId?: string | null; file?: string | null; at: string }
 export interface Notice { id: string; sessionId: string; name: string; kind: string; text: string; at: string }
 export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[] }
-export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
+export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; uiLanguage?: UiLanguage; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
 export type SystemEventsMode = 'full' | 'compact' | 'hidden'
 export interface VoiceOwner { clientId: string; surface: 'chats' | 'workspace' }
 export interface FileEntry { name: string; path: string; directory: boolean; size: number; modifiedAt: string | null }

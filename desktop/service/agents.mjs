@@ -126,6 +126,7 @@ export function terminalCommand(agent, { bypass = false, resumeId, nativeId, eff
     if (bypass) args.push('--dangerously-skip-permissions');
     if (effort) args.push('--effort', effort);
     if (antigravityLog) args.push('--log-file', antigravityLog);
+    if (settings) args.push('--settings', settings);
   } else if (agent === 'kimi') {
     if (resumeId) args.push('--session', resumeId);
     if (bypass) args.push('--yolo');

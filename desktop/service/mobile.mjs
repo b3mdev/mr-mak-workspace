@@ -18,6 +18,7 @@ import { MobileReports } from './mobile-reports.mjs';
 import { MobileDictation } from './mobile-dictation.mjs';
 import { answerPrompt, readPrompt } from './terminal-prompt.mjs';
 import { MobilePush } from './mobile-push.mjs';
+import { resolveUiLanguage } from './language.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
@@ -29,13 +30,13 @@ const DEVICE_IDLE_TTL = 30 * 24 * 60 * 60 * 1000;
 const send = (ws, value) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
 
 export class MobileGateway {
-  constructor({ repo, uiDir, stateDir, sessions, attachments, settings, changed, closeChat, network, transport = new TailscaleTransport(), dictation = new MobileDictation(repo), chooseDictation, readAloud = new LocalReadAloud(repo), transcripts = new ConversationTranscripts(), sendPush }) {
+  constructor({ repo, uiDir, stateDir, sessions, attachments, settings, changed, closeChat, network, transport = new TailscaleTransport(), dictation = new MobileDictation(repo), chooseDictation, chooseLanguage, readAloud = new LocalReadAloud(repo), transcripts = new ConversationTranscripts(), sendPush }) {
     Object.assign(this, { repo, uiDir, sessions, attachments, settings, changed, closeChat, network, transport });
     this.file = path.join(stateDir, 'mobile-access.json');
     this.saves = Promise.resolve(); this.pending = new Map(); this.clients = new Set(); this.inflight = new Map(); this.uploads = new Map(); this.queues = new Map();
     this.transcripts = transcripts; this.conversationMedia = new ConversationMedia(); this.active = false; this.error = ''; this.origin = ''; this.rates = new Map();
     this.reports = new MobileReports(this); this.push = new MobilePush(this, sendPush);
-    this.readAloud = readAloud; this.dictation = dictation; this.chooseDictation = chooseDictation;
+    this.readAloud = readAloud; this.dictation = dictation; this.chooseDictation = chooseDictation; this.chooseLanguage = chooseLanguage;
   }
   async init() {
     this.state = { enabled: false, devices: [], receipts: [], ...await readJson(this.file, {}) };
@@ -323,12 +324,13 @@ export class MobileGateway {
         if (method === 'POST' && route === '/mobile/api/push') return json(response, 200, await this.push.subscribe(device, data.subscription));
         if (method === 'GET' && route === '/mobile/api/dictation') return json(response, 200, await this.dictation.status());
         if (method === 'POST' && route === '/mobile/api/dictation') return json(response, 200, await this.chooseDictation(data.provider));
+        if (method === 'POST' && route === '/mobile/api/language' && this.chooseLanguage) return json(response, 200, await this.chooseLanguage(data.language));
         if (method === 'POST' && route === '/mobile/api/transcribe') return json(response, 200, await this.dictation.transcribe(request, device.id, () => this.active && this.state.devices.some(item => item.id === device.id && this.validDevice(item))));
         if (method === 'GET' && route === '/mobile/api/reports') return json(response, 200, await this.reports.list());
         const cover = /^\/mobile\/api\/reports\/([^/]+)\/cover$/.exec(route);
         if (cover && ['GET', 'HEAD'].includes(method)) return await this.reports.serveCover(request, response, cover[1]);
         if (method === 'POST' && route === '/mobile/api/reports/open') return json(response, 200, await this.reports.open(device, data));
-        if (method === 'GET' && route === '/mobile/api/bootstrap') return json(response, 200, { sessions: this.list(), agents: inventory().filter(item => item.id !== 'shell'), device: { id: device.id, name: device.name }, defaultAgent: this.settings().defaultAgent, defaultBypass: this.settings().defaultBypass, dictation: await this.dictation.status(), mutedChats: this.push.muted() });
+        if (method === 'GET' && route === '/mobile/api/bootstrap') return json(response, 200, { sessions: this.list(), agents: inventory().filter(item => item.id !== 'shell'), device: { id: device.id, name: device.name }, defaultAgent: this.settings().defaultAgent, defaultBypass: this.settings().defaultBypass, uiLanguage: resolveUiLanguage(this.settings().uiLanguage), dictation: await this.dictation.status(), mutedChats: this.push.muted() });
         if (method === 'POST' && route === '/mobile/api/disconnect') { await this.revoke(device.id); response.setHeader('Set-Cookie', this.cookie('', true)); return json(response, 200, { disconnected: true }); }
         if (method === 'POST' && route === '/mobile/api/images') {
           if (this.uploads.size >= 150) fail('Too many pending images. Try again later.', 429);

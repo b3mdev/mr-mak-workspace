@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { DesktopState, Preview, ServiceEvent } from './types'
 import { anySignal } from '../lib/abort'
+import { tNow } from '../lib/i18n/translate'
 
 const params = new URLSearchParams(window.location.search)
 export const isDesktop = params.get('desktop') === '1'
@@ -41,7 +42,7 @@ export async function api<T>(path: string, data?: unknown, method?: string, opti
     body: data === undefined ? undefined : JSON.stringify(data),
   })
   const value = await response.json()
-  if (!response.ok) throw Object.assign(new Error(value.error || `Request failed (${response.status})`), typeof value.code === 'string' ? { code: value.code } : {})
+  if (!response.ok) throw Object.assign(new Error(value.error || tNow('client.requestFailed', { status: response.status })), typeof value.code === 'string' ? { code: value.code } : {})
   return value as T
 }
 export function pickFiles(): Promise<string[]> {
@@ -53,7 +54,7 @@ export function pickFiles(): Promise<string[]> {
       if (detail?.requestId !== requestId) return
       cleanup(); resolve(detail.paths)
     }
-    const closed = () => { cleanup(); reject(new Error('The file picker window was closed.')) }
+    const closed = () => { cleanup(); reject(new Error(tNow('client.pickerClosed'))) }
     window.addEventListener('mrmak-picked-files', picked)
     window.addEventListener('pagehide', closed)
     api('/files/pick', { requestId }).catch(error => { cleanup(); reject(error) })
@@ -62,7 +63,7 @@ export function pickFiles(): Promise<string[]> {
 export async function uploadImage(file: File): Promise<{ path: string; name: string }> {
   const response = await fetch('/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name || 'Screenshot.png') }, body: file })
   const value = await response.json()
-  if (!response.ok) throw new Error(value.error || 'Image could not be saved')
+  if (!response.ok) throw new Error(value.error || tNow('client.imageSaveFailed'))
   return value
 }
 export async function uploadFile(file: File, folder: string): Promise<{ path: string; name: string; renamed: boolean }> {
@@ -70,7 +71,7 @@ export async function uploadFile(file: File, folder: string): Promise<{ path: st
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' }, body: file,
   })
   const value = await response.json()
-  if (!response.ok) throw new Error(value.error || 'File could not be copied')
+  if (!response.ok) throw new Error(value.error || tNow('client.fileCopyFailed'))
   return value
 }
 export async function uploadCardImage(entityId: string, step: number, file: File): Promise<{ image: string }> {
@@ -78,7 +79,7 @@ export async function uploadCardImage(entityId: string, step: number, file: File
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' }, body: file,
   })
   const value = await response.json()
-  if (!response.ok) throw new Error(value.error || 'The image could not be added.')
+  if (!response.ok) throw new Error(value.error || tNow('client.cardImageFailed'))
   return value
 }
 export function sendEvent(value: unknown) {
@@ -116,7 +117,7 @@ function connect() {
       const sessions = state.sessions.filter(item => item.id !== event.id)
       update({ sessions, selectedId: state.selectedId === event.id ? sessions[0]?.id || null : state.selectedId })
     }
-    if (event.type === 'service-error') reportError(event.error || 'Connection error')
+    if (event.type === 'service-error') reportError(event.error || tNow('client.connectionError'))
     if (event.type === 'coordinator-state') update({ coordinator: event.state || 'idle' })
     if (event.type === 'coordinator-result' && event.operation) {
       const operation = event.operation
@@ -151,11 +152,11 @@ window.addEventListener('pagehide', () => { token = ''; socket?.close(); clearTi
 export async function transcribeDesktopAudio(recording: import('../mobile/voice-drafts').VoiceDraft, signal: AbortSignal): Promise<{ text: string }> {
   const response = await fetch('/api/transcribe', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': recording.audio.type, 'X-Transcription-Id': recording.id }, body: recording.audio, signal: anySignal([signal, AbortSignal.timeout(270000)]) })
   const result = await response.json()
-  if (!response.ok) throw new Error(result.error || 'Could not transcribe this recording.')
+  if (!response.ok) throw new Error(result.error || tNow('client.transcribeFailed'))
   return result
 }
 export async function speakDesktopText(sessionId: string, voice: string, text: string, signal: AbortSignal): Promise<ArrayBuffer> {
   const response = await fetch(`/api/sessions/${sessionId}/speak`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ voice, text }), signal })
-  if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || 'Speech generation failed.') }
+  if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || tNow('client.speechFailed')) }
   return response.arrayBuffer()
 }

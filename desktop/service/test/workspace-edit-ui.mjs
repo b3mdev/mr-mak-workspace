@@ -20,7 +20,7 @@ await writeFile(file, JSON.stringify({ entities: [card, { ...card, id: 'other', 
 await mkdir(path.join(repo, '.mrmak'));
 await writeFile(path.join(repo, '.mrmak', 'settings.json'), JSON.stringify({ workspaceRoute: '#/other/0' }));
 await cp(path.join(root, 'public', 'assets'), path.join(root, 'dist', 'assets'), { recursive: true });
-const service = await createService({ repo, uiDir: path.join(root, 'dist') });
+const service = await createService({ repo, uiDir: path.join(root, 'dist'), codexUsageQuery: async () => ({ quotas: [], total: null, at: Date.now() }) });
 let browser;
 try {
   browser = await launchBrowser();
@@ -30,7 +30,7 @@ try {
   page.setDefaultTimeout(15000); peer.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.workspace); await peer.goto(service.urls.workspace);
-  await expect(page.getByRole('heading', { name: 'Projetos', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
   assert.equal(new URL(page.url()).hash, '', 'A saved report must not replace the project home at startup');
   const homeCard = page.locator('.home [data-card="sample"]');
   const dot = () => homeCard.getByRole('button', { name: /^Edit Character Workshop:/ });
@@ -53,7 +53,7 @@ try {
   await row.getByRole('button').click();
   await menu.getByRole('button', { name: 'Active', exact: true }).click();
   await expect(row.getByRole('button')).toHaveAttribute('aria-label', 'Edit Character Workshop: Active');
-  await page.getByRole('button', { name: /Hide archive/ }).click();
+  await page.locator('.sidebar').getByRole('button', { name: /Hide archive/ }).click();
   await expect(homeCard).toBeVisible();
   // A date-archived card can be brought back even if its stored status is active.
   await page.getByRole('textbox', { name: 'Search entities' }).fill('Older project');

@@ -5,6 +5,7 @@ import { cardCover, cardIcon, cardImageUrl, cardPhase, cardProgress } from '../l
 import { categoryIcon } from '../lib/categories'
 import { contentUrl } from '../desktop/client'
 import { EntityStatusButton } from './EntityControls'
+import { localizeCategory, useT } from '../lib/i18n'
 
 /**
  * The design-system card: glass surface over the aura, gradient edge
@@ -13,6 +14,7 @@ import { EntityStatusButton } from './EntityControls'
  * scripts/shared/report_style.py for generated reports.
  */
 export default function MakCard({ entity, discoveredCover }: { entity: WorkspaceEntity; discoveredCover?: string }) {
+  const { lang, t } = useT()
   const steps = entity.steps.length
   // Cover, phase and progress are optional; a card without them is unchanged.
   // A cover that fails to load is dropped, so it leaves no empty band.
@@ -37,9 +39,9 @@ export default function MakCard({ entity, discoveredCover }: { entity: Workspace
       <div className="card-top">
         <span className="chip">
           <span aria-hidden="true">{categoryIcon(entity.category)}</span>
-          {entity.category || 'other'}
+          {localizeCategory(lang, entity.category || 'other')}
         </span>
-        {entity.pinned && <span className="chip chip-pin">pinned</span>}
+        {entity.pinned && <span className="chip chip-pin">{t('card.pinned')}</span>}
       </div>
 
       <div className="card-project-title">
@@ -65,11 +67,11 @@ export default function MakCard({ entity, discoveredCover }: { entity: Workspace
               <div
                 className="card-progress-bar"
                 role="progressbar"
-                aria-label="Progress"
+                aria-label={t('card.progress')}
                 aria-valuemin={0}
                 aria-valuemax={progress.total}
                 aria-valuenow={progress.done}
-                aria-valuetext={`${progress.done} of ${progress.total}${progress.label ? ` ${progress.label}` : ''}`}
+                aria-valuetext={t('card.progressValue', { done: progress.done, total: progress.total, label: progress.label ? ` ${progress.label}` : '' })}
               >
                 <span style={{ width: `${progress.percent}%` }} />
               </div>
@@ -80,12 +82,12 @@ export default function MakCard({ entity, discoveredCover }: { entity: Workspace
 
       <div className="card-foot">
         <span>
-          {steps} step{steps === 1 ? '' : 's'}
+          {t(steps === 1 ? 'card.stepOne' : 'card.stepMany', { count: steps })}
         </span>
         <span>·</span>
         <span>{entity.updated ?? entity.created}</span>
         <span className="card-open" aria-hidden="true">
-          open →
+          {t('card.open')}
         </span>
       </div>
     </a>

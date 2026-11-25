@@ -148,3 +148,10 @@
 
 /* The chat bell sits between the view switch and the activity figure. */
 .mobile-chat-tools .mobile-chat-mute { flex: 0 0 38px; width: 38px; height: 32px; padding: 0; display: grid; place-items: center; color: var(--m-muted); }.mobile-chat-tools .mobile-chat-mute.muted { color: #e6c591; }
+
+.mobile-connect-lang { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.mobile-app .language-toggle { background: #1a1822; border-color: #3a303f; color: var(--m-text); }
+.mobile-app .language-toggle .active { background: #e4b6cd24; color: #f2c8df; }
+.mobile-app .workspace-language-picker { color: var(--m-text); }
+.mobile-app .workspace-language-picker select { width: 100%; background: #101116; border: 1px solid var(--m-line); color: var(--m-text); border-radius: 10px; padding: 10px 12px; font-size: 15px; }
+.mobile-app .workspace-language-picker .workspace-language-hint { color: var(--m-muted); font-size: 11px; margin: 4px 0 0; }

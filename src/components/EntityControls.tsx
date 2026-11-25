@@ -4,22 +4,29 @@ import type { WorkspaceEntity } from '../types'
 import { updateWorkspaceEntity, type EntityPatch } from '../lib/workspace'
 import { CATEGORY_ICONS } from '../lib/categories'
 import { isDesktop } from '../desktop/client'
+import { localizeCategoryTitle, useT, type MessageKey } from '../lib/i18n'
 import './entity-controls.css'
 
-const labels = { active: 'Active', done: 'Done', archived: 'Archived' } as const
+const statusKeys: Record<WorkspaceEntity['status'], MessageKey> = {
+  active: 'entity.statusActive',
+  done: 'entity.statusDone',
+  archived: 'entity.statusArchived',
+}
 const Controls = createContext<{ open: (entity: WorkspaceEntity, button: HTMLButtonElement) => void; editing: string | null } | null>(null)
 type Target = { id: string; button: HTMLButtonElement; anchor: DOMRect }
 
 export function EntityStatusButton({ entity }: { entity: WorkspaceEntity }) {
+  const { t } = useT()
   const controls = useContext(Controls)
+  const statusLabel = t(statusKeys[entity.status])
   return (
     <button
       type="button"
       className="entity-status-button"
-      aria-label={`Edit ${entity.title}: ${labels[entity.status]}`}
+      aria-label={t('entity.editAria', { title: entity.title, status: statusLabel })}
       aria-haspopup="dialog"
       aria-expanded={controls?.editing === entity.id}
-      title={`${labels[entity.status]} · ${isDesktop ? 'Change status or category' : 'Open the desktop app to edit this card'}`}
+      title={`${statusLabel} · ${isDesktop ? t('entity.changeStatusHint') : t('entity.desktopOnlyHint')}`}
       disabled={!isDesktop}
       onClick={event => controls?.open(entity, event.currentTarget)}
     >
@@ -35,6 +42,7 @@ function EntityMenu({ entity, entities, target, onClose, onChanged }: {
   onClose: () => void
   onChanged: () => Promise<void>
 }) {
+  const { lang, t, serviceMessage } = useT()
   const dialog = useRef<HTMLDialogElement>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -71,7 +79,7 @@ function EntityMenu({ entity, entities, target, onClose, onChanged }: {
       await onChanged()
       onClose()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The card could not be updated. Try again.')
+      setError(reason instanceof Error ? serviceMessage(reason.message) : t('entity.updateFailed'))
     } finally { setSaving(false) }
   }
 
@@ -79,7 +87,7 @@ function EntityMenu({ entity, entities, target, onClose, onChanged }: {
     <dialog
       ref={dialog}
       className="entity-menu"
-      aria-label={`Card settings: ${entity.title}`}
+      aria-label={t('entity.settingsAria', { title: entity.title })}
       aria-busy={saving}
       onCancel={event => { event.preventDefault(); if (!saving) onClose() }}
       onClick={event => {
@@ -90,32 +98,32 @@ function EntityMenu({ entity, entities, target, onClose, onChanged }: {
       onKeyDown={event => event.stopPropagation()}
     >
       <div className="entity-menu-heading">
-        <div><span>Card settings</span><h2>{entity.title}</h2></div>
-        <button type="button" className="entity-menu-close" aria-label="Close card settings" disabled={saving} onClick={onClose}>×</button>
+        <div><span>{t('entity.settingsTitle')}</span><h2>{entity.title}</h2></div>
+        <button type="button" className="entity-menu-close" aria-label={t('entity.closeSettings')} disabled={saving} onClick={onClose}>×</button>
       </div>
       <fieldset disabled={saving}>
-        <legend>Status</legend>
+        <legend>{t('entity.statusLegend')}</legend>
         <div className="entity-status-options">
-          {(Object.keys(labels) as Array<WorkspaceEntity['status']>).map(status => (
+          {(Object.keys(statusKeys) as Array<WorkspaceEntity['status']>).map(status => (
             <button type="button" key={status} aria-pressed={entity.status === status} onClick={() => void save({ status })}>
               <span className={`status-dot ${status}`} aria-hidden="true" />
-              <span>{labels[status]}</span>
+              <span>{t(statusKeys[status])}</span>
               <span className="entity-status-check" aria-hidden="true">{entity.status === status ? '✓' : ''}</span>
             </button>
           ))}
         </div>
       </fieldset>
       <label className="entity-category-control">
-        Category
-        <select aria-label="Card category" value={category} disabled={saving} onChange={event => void save({ category: event.target.value })}>
-          {categories.map(value => <option key={value} value={value}>{value.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}</option>)}
+        {t('entity.categoryLabel')}
+        <select aria-label={t('entity.categoryAria')} value={category} disabled={saving} onChange={event => void save({ category: event.target.value })}>
+          {categories.map(value => <option key={value} value={value}>{localizeCategoryTitle(lang, value)}</option>)}
         </select>
       </label>
       <button type="button" className="entity-pin-toggle" disabled={saving} onClick={() => void save({ pinned: !entity.pinned })}>
-        {entity.pinned ? 'Unpin card' : 'Pin card'}
+        {entity.pinned ? t('entity.unpin') : t('entity.pin')}
       </button>
-      <p className="entity-menu-hint">Archived cards keep their files and tabs. Find them in search or Show archive.</p>
-      {saving && <p className="entity-menu-feedback" role="status">Saving…</p>}
+      <p className="entity-menu-hint">{t('entity.archiveHint')}</p>
+      {saving && <p className="entity-menu-feedback" role="status">{t('common.saving')}</p>}
       {error && <p className="entity-menu-error" role="alert">{error}</p>}
     </dialog>, document.body,
   )

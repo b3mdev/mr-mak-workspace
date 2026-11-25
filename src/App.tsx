@@ -9,6 +9,7 @@ import HomeGrid from './components/HomeGrid'
 import EntityControls from './components/EntityControls'
 import ReportBoundary from './components/ReportBoundary'
 import { contentUrl, isDesktop, sendEvent } from './desktop/client'
+import { useT } from './lib/i18n'
 
 const Compare3D = lazy(() => import('./components/Compare3D'))
 const ReportViewer = lazy(() => import('./components/ReportViewer'))
@@ -23,6 +24,7 @@ const byFreshness = (a: WorkspaceEntity, b: WorkspaceEntity) =>
   lastTouched(b).localeCompare(lastTouched(a)) || statusRank(a) - statusRank(b)
 
 export default function App() {
+  const { t } = useT()
   const { workspace, offline, lastSync, reload } = useWorkspace()
   const [route, setRoute] = useState<Route>(parseHash)
   const [query, setQuery] = useState('')
@@ -74,8 +76,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = entity ? `Bento Workspace — ${entity.title}` : 'Bento Workspace'
-  }, [entity])
+    document.title = entity ? t('brand.workspaceTitle', { title: entity.title }) : t('brand.name')
+  }, [entity, t])
 
   const goHome = useCallback(() => {
     history.pushState(null, '', window.location.pathname + window.location.search)
@@ -152,8 +154,8 @@ export default function App() {
       <button
         className="sidebar-reopen"
         onClick={() => setCollapsed(false)}
-        title="Show menu ( [ )"
-        aria-label="Show menu"
+        title={t('workspace.showMenuTitle')}
+        aria-label={t('workspace.showMenu')}
       >
         <MakLogo size={38} />
       </button>
@@ -172,7 +174,7 @@ export default function App() {
         <div className="content">
           <ReportBoundary key={reportUrl || 'home'} onHome={goHome}>
           {entity && reportUrl && step?.viewer === 'card' ? (
-            <Suspense fallback={<div className="report-loading">Opening card…</div>}><EditableCard key={`${entity.id}:${stepIndex}`} url={reportUrl} entityId={entity.id} step={stepIndex} /></Suspense>
+            <Suspense fallback={<div className="report-loading">{t('workspace.openingCard')}</div>}><EditableCard key={`${entity.id}:${stepIndex}`} url={reportUrl} entityId={entity.id} step={stepIndex} /></Suspense>
           ) : entity && reportUrl && step?.viewer === 'compare3d' ? (
             <Suspense fallback={<div className="boot"><MakLogo size={56} /></div>}><Compare3D
               key={reportUrl}

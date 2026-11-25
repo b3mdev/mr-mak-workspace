@@ -2,7 +2,9 @@ import type { WorkspaceEntity } from '../types'
 import { isDesktop } from '../desktop/client'
 import BrowserSettings from './BrowserSettings'
 import { EntityStatusButton } from './EntityControls'
+import { LanguageToggle } from './LanguagePicker'
 import NewCard from './NewCard'
+import { useT } from '../lib/i18n'
 
 interface TopbarProps {
   entity: WorkspaceEntity | null
@@ -13,11 +15,12 @@ interface TopbarProps {
 }
 
 export default function Topbar({ entity, stepIndex, onStep, onHome, reportUrl }: TopbarProps) {
+  const { t } = useT()
   return (
     <div className="topbar">
-      <nav className="breadcrumb" aria-label="Breadcrumb">
+      <nav className="breadcrumb" aria-label={t('workspace.breadcrumb')}>
         <button className="crumb-link" onClick={onHome}>
-          Workspace
+          {t('workspace.title')}
         </button>
         {entity && (
           <>
@@ -27,7 +30,7 @@ export default function Topbar({ entity, stepIndex, onStep, onHome, reportUrl }:
           </>
         )}
         {!isDesktop && <BrowserSettings />}
-        {isDesktop && <NewCard />}
+        {isDesktop && <><NewCard /><LanguageToggle /></>}
       </nav>
 
       {entity && (
@@ -54,7 +57,7 @@ export default function Topbar({ entity, stepIndex, onStep, onHome, reportUrl }:
               href={reportUrl}
               target="_blank"
               rel="noreferrer"
-              title="Open report in a new tab"
+              title={t('workspace.openReportNewTab')}
             >
               ↗
             </a>

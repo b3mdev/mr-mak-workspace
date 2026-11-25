@@ -3,7 +3,7 @@ import { api } from './client'
 import { AgentLogo, Icon } from './Icons'
 import type { AgentId } from './types'
 import './mcp.css'
-import { fileManager } from './platform'
+import { localizeFileManager, useT, type MessageKey } from '../lib/i18n'
 
 type Check = { status: 'available' | 'agent-auth' | 'timeout' | 'unavailable'; toolCount: number | null; moreTools?: boolean; checkedAt: string; stale?: boolean }
 type Server = {
@@ -13,9 +13,9 @@ type Server = {
 }
 type Inventory = { scannedAt: string; servers: Server[]; sources: { client: string; scope: string; path: string }[]; problems: { path: string; message: string }[] }
 const clients = { codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity', kimi: 'Kimi', cursor: 'Cursor' }
-const scopes: Record<string, string> = { project: 'Project', local: 'Project · this PC', global: 'Global', plugin: 'Plugin', managed: 'Managed' }
-const stateLabel: Record<string, string> = { configured: 'Enabled', disabled: 'Disabled', managed: 'Host managed', 'missing-env': 'Needs setup', 'missing-command': 'Not installed', approval: 'Needs approval' }
-const checkLabel: Record<string, string> = { available: 'Available', 'agent-auth': 'Check login in agent', timeout: 'Timed out', unavailable: 'Not reachable' }
+const scopeKeys: Record<string, MessageKey> = { project: 'mcp.scope.project', local: 'mcp.scope.local', global: 'mcp.scope.global', plugin: 'mcp.scope.plugin', managed: 'mcp.scope.managed' }
+const stateKeys: Record<string, MessageKey> = { configured: 'mcp.state.configured', disabled: 'mcp.state.disabled', managed: 'mcp.state.managed', 'missing-env': 'mcp.state.missing-env', 'missing-command': 'mcp.state.missing-command', approval: 'mcp.state.approval' }
+const checkKeys: Record<string, MessageKey> = { available: 'mcp.check.available', 'agent-auth': 'mcp.check.agent-auth', timeout: 'mcp.check.timeout', unavailable: 'mcp.check.unavailable' }
 
 export default function McpPanel({ onClose }: { onClose: () => void }) {
   const [inventory, setInventory] = useState<Inventory | null>(null)
@@ -37,44 +37,49 @@ export default function McpPanel({ onClose }: { onClose: () => void }) {
     const timer = window.setInterval(onFocus, 30000)
     return () => { invalidate(); window.removeEventListener('focus', onFocus); clearInterval(timer) }
   }, [refresh, invalidate])
+  const { lang, t, dateTime, serviceMessage } = useT()
+  const manager = localizeFileManager(lang)
   const check = async (server: Server) => {
     setBusy(value => new Set([...value, server.id])); setError('')
     try { await api('/mcp/check', { id: server.id }); await refresh() }
     catch (error) { setError(error instanceof Error ? error.message : String(error)) }
     finally { setBusy(value => { const next = new Set(value); next.delete(server.id); return next }) }
   }
+  const scopeLabel = (value: string) => scopeKeys[value] ? t(scopeKeys[value]) : value
+  const stateLabel = (value: string) => stateKeys[value] ? t(stateKeys[value]) : value
+  const checkLabel = (value: string) => checkKeys[value] ? t(checkKeys[value]) : value
   const visible = (inventory?.servers || []).filter(server => (client === 'all' || server.client === client)
     && (scope === 'all' || (scope === 'project' ? ['project', 'local'].includes(server.scope) : server.scope === scope))
     && `${server.name} ${server.endpoint} ${server.plugin || ''}`.toLowerCase().includes(query.toLowerCase()))
   return <div className="files-panel mcp-panel"><header><h2>MCP</h2><div>
-    <button className="desk-icon" onClick={() => void refresh()} title="Refresh MCP configurations" aria-label="Refresh MCP configurations"><Icon name="refresh" size={15} /></button>
-    <button className="desk-icon" onClick={onClose} aria-label="Close MCP"><Icon name="close" size={17} /></button>
+    <button className="desk-icon" onClick={() => void refresh()} title={t('mcp.refreshTitle')} aria-label={t('mcp.refreshTitle')}><Icon name="refresh" size={15} /></button>
+    <button className="desk-icon" onClick={onClose} aria-label={t('mcp.closeAria')}><Icon name="close" size={17} /></button>
   </div></header>
-    <div className="mcp-summary"><strong>{inventory ? `${inventory.servers.filter(server => server.enabled).length} enabled connections` : 'Reading configurations…'}</strong><p>Tools available to your agents. Check a server to see whether it responds now.</p></div>
-    <div className="mcp-filters"><label>Agent<select aria-label="Filter MCP by agent" value={client} onChange={event => setClient(event.target.value)}><option value="all">All agents</option>{Object.entries(clients).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>Stored in<select aria-label="Filter MCP by scope" value={scope} onChange={event => setScope(event.target.value)}><option value="all">All locations</option><option value="project">This project</option><option value="global">Global</option><option value="plugin">Plugins</option></select></label></div>
-    <div className="file-filter"><Icon name="search" size={14} /><input aria-label="Find MCP" placeholder="Find a server…" value={query} onChange={event => setQuery(event.target.value)} /></div>
+    <div className="mcp-summary"><strong>{inventory ? t('mcp.enabledCount', { count: inventory.servers.filter(server => server.enabled).length }) : t('mcp.readingConfigs')}</strong><p>{t('mcp.summaryDesc')}</p></div>
+    <div className="mcp-filters"><label>{t('mcp.agentLabel')}<select aria-label={t('mcp.filterAgentAria')} value={client} onChange={event => setClient(event.target.value)}><option value="all">{t('mcp.allAgents')}</option>{Object.entries(clients).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>{t('mcp.storedIn')}<select aria-label={t('mcp.filterScopeAria')} value={scope} onChange={event => setScope(event.target.value)}><option value="all">{t('mcp.allLocations')}</option><option value="project">{t('mcp.thisProject')}</option><option value="global">{t('mcp.global')}</option><option value="plugin">{t('mcp.plugins')}</option></select></label></div>
+    <div className="file-filter"><Icon name="search" size={14} /><input aria-label={t('mcp.findAria')} placeholder={t('mcp.findPlaceholder')} value={query} onChange={event => setQuery(event.target.value)} /></div>
     <div className="mcp-scroll">
-      {error && <p className="desk-error-inline" role="alert">{error}</p>}
+      {error && <p className="desk-error-inline" role="alert">{serviceMessage(error)}</p>}
       {inventory?.problems.map(problem => <p key={problem.path} className="mcp-problem">{problem.message}<small>{problem.path}</small></p>)}
       {visible.map(server => <article className="mcp-server" key={server.id} data-mcp-id={server.id}>
-        <div className="mcp-server-title"><span className="mcp-provider">{server.client === 'cursor' ? <Icon name="terminal" size={16} /> : <AgentLogo agent={server.client as AgentId} size={16} />}</span><h3>{server.name}</h3><span className={`mcp-state ${server.readiness}`}>{stateLabel[server.readiness] || server.readiness}</span></div>
-        <p className="mcp-subtitle">{clients[server.client]}<span>·</span>{scopes[server.scope] || server.scope}<span>·</span>{server.transport === 'stdio' ? 'Local process' : server.transport.toUpperCase()}</p>
+        <div className="mcp-server-title"><span className="mcp-provider">{server.client === 'cursor' ? <Icon name="terminal" size={16} /> : <AgentLogo agent={server.client as AgentId} size={16} />}</span><h3>{server.name}</h3><span className={`mcp-state ${server.readiness}`}>{stateLabel(server.readiness)}</span></div>
+        <p className="mcp-subtitle">{clients[server.client]}<span>·</span>{scopeLabel(server.scope)}<span>·</span>{server.transport === 'stdio' ? t('mcp.localProcess') : server.transport.toUpperCase()}</p>
         <p className="mcp-endpoint" title={server.endpoint || server.executable || ''}>{server.endpoint || server.executable}</p>
-        {server.missingEnv.length > 0 && <p className="mcp-note">Add to .env: {server.missingEnv.join(', ')}</p>}
-        {server.readiness === 'missing-command' && <p className="mcp-note">Install this server on this computer.</p>}
-        {server.readiness === 'approval' && <p className="mcp-note">Approve this project server in Claude.</p>}
-        {server.plugin && <p className="mcp-note">{server.synced ? `Provided by ${server.plugin.replace(/@synced$/, '')}, synced from your claude.ai account.` : `Provided by ${server.plugin}.`}</p>}
-        <div className="mcp-check"><span className={server.connection?.status === 'available' && !server.connection.stale ? 'available' : ''}>{busy.has(server.id) ? 'Checking…' : server.connection ? `${server.connection.stale ? 'Last check: ' : ''}${checkLabel[server.connection.status]}` : 'Connection not checked'}{!busy.has(server.id) && server.connection?.toolCount != null && <small>{server.connection.toolCount}{server.connection.moreTools ? '+' : ''} tools</small>}</span>
-          {server.canCheck && <button onClick={() => void check(server)} disabled={busy.has(server.id) || busy.size >= 2} aria-label={`Check ${server.name} for ${clients[server.client]}`}>Check</button>}
+        {server.missingEnv.length > 0 && <p className="mcp-note">{t('mcp.addToEnv', { vars: server.missingEnv.join(', ') })}</p>}
+        {server.readiness === 'missing-command' && <p className="mcp-note">{t('mcp.installServer')}</p>}
+        {server.readiness === 'approval' && <p className="mcp-note">{t('mcp.approveInClaude')}</p>}
+        {server.plugin && <p className="mcp-note">{server.synced ? t('mcp.providedBySynced', { plugin: server.plugin.replace(/@synced$/, '') }) : t('mcp.providedBy', { plugin: server.plugin })}</p>}
+        <div className="mcp-check"><span className={server.connection?.status === 'available' && !server.connection.stale ? 'available' : ''}>{busy.has(server.id) ? t('mcp.checking') : server.connection ? `${server.connection.stale ? t('mcp.lastCheck') : ''}${checkLabel(server.connection.status)}` : t('mcp.notChecked')}{!busy.has(server.id) && server.connection?.toolCount != null && <small>{t('mcp.toolsCount', { count: server.connection.toolCount, plus: server.connection.moreTools ? '+' : '' })}</small>}</span>
+          {server.canCheck && <button onClick={() => void check(server)} disabled={busy.has(server.id) || busy.size >= 2} aria-label={t('mcp.checkAria', { name: server.name, client: clients[server.client] })}>{t('mcp.checkButton')}</button>}
         </div>
-        {server.connection && <p className="mcp-check-time">Checked {new Date(server.connection.checkedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>}
-        {server.connection?.status === 'agent-auth' && <p className="mcp-note">This check cannot reuse the agent’s private login. Use /mcp in that agent to see its authenticated connection.</p>}
-        {server.connection?.status === 'unavailable' && <p className="mcp-note">The server did not complete the MCP handshake. A local companion app may need to be running.</p>}
-        <details className="mcp-sources"><summary>Configuration{server.sources.length > 1 ? ` · ${server.sources.length} locations` : ''}</summary>{server.sources.map(source => <div key={source.path}><span>{scopes[source.scope] || source.scope}{source.effective ? ' · effective source' : ' · lower priority'}</span><code>{source.path}</code><button onClick={() => api('/reveal', { path: source.path }).catch(error => setError(String(error.message || error)))}>Show in {fileManager} <Icon name="external" size={12} /></button></div>)}{server.credentialNames.length > 0 && <p>Credentials are hidden.</p>}</details>
+        {server.connection && <p className="mcp-check-time">{t('mcp.checkedAt', { time: dateTime(server.connection.checkedAt, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</p>}
+        {server.connection?.status === 'agent-auth' && <p className="mcp-note">{t('mcp.agentAuthNote')}</p>}
+        {server.connection?.status === 'unavailable' && <p className="mcp-note">{t('mcp.unavailableNote')}</p>}
+        <details className="mcp-sources"><summary>{t('mcp.configuration')}{server.sources.length > 1 ? t('mcp.locationsCount', { count: server.sources.length }) : ''}</summary>{server.sources.map(source => <div key={source.path}><span>{scopeLabel(source.scope)}{source.effective ? t('mcp.effectiveSource') : t('mcp.lowerPriority')}</span><code>{source.path}</code><button onClick={() => api('/reveal', { path: source.path }).catch(error => setError(String(error.message || error)))}>{t('files.showInManager', { manager })} <Icon name="external" size={12} /></button></div>)}{server.credentialNames.length > 0 && <p>{t('mcp.credentialsHidden')}</p>}</details>
       </article>)}
-      {inventory && !visible.length && <p className="mcp-empty">No MCP servers match these filters.</p>}
-      {inventory && (client === 'all' || client === 'claude') && (scope === 'all' || scope === 'global') && <p className="mcp-note mcp-connectors">Claude Code can also load claude.ai connectors (such as Gmail or Notion) from a signed-in Claude account. They are not stored on this computer, so they are not listed here; run /mcp in a Claude chat to see them.</p>}
+      {inventory && !visible.length && <p className="mcp-empty">{t('mcp.empty')}</p>}
+      {inventory && (client === 'all' || client === 'claude') && (scope === 'all' || scope === 'global') && <p className="mcp-note mcp-connectors">{t('mcp.claudeConnectors')}</p>}
     </div>
-    <footer className="mcp-footer"><p>Enabled means configured. A check opens its own temporary connection; each chat keeps its own MCP session. Desktop app connectors are managed by their host.</p><button onClick={() => { navigator.clipboard.writeText('/mcp').then(() => setCopied(true)).catch(error => setError(String(error.message || error))) }}>{copied ? 'Copied /mcp' : 'Copy /mcp for chat status'}</button></footer>
+    <footer className="mcp-footer"><p>{t('mcp.footerNote')}</p><button onClick={() => { navigator.clipboard.writeText('/mcp').then(() => setCopied(true)).catch(error => setError(String(error.message || error))) }}>{copied ? t('mcp.copiedCmd') : t('mcp.copyCmd')}</button></footer>
   </div>
 }

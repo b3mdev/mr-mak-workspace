@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { claudeModels, readStatus, reporterCommand, statusFolder, statusSettings } from '../claude-status.mjs';
+import { antigravityStatusEnvironment, claudeModels, readStatus, reporterCommand, statusFolder, statusSettings } from '../claude-status.mjs';
 import { applyChoice, cacheWarning, liveStats, rememberedChoice, switchingModel } from '../chat-models.mjs';
 import { inventory, terminalCommand } from '../agents.mjs';
 import { terminalPrompt } from '../terminal-prompt.mjs';
@@ -30,7 +30,7 @@ async function report(file, value) {
   await done;
 }
 
-test('the status line reporter saves the model and effort, and nothing private', async () => {
+test('the status line reporter saves model, effort and aggregate usage without private fields', async () => {
   const state = await temp('claude-status-');
   const folder = statusFolder(state);
   await mkdir(folder, { recursive: true });
@@ -39,6 +39,9 @@ test('the status line reporter saves the model and effort, and nothing private',
   assert.equal(chat.model.id, 'claude-opus-5-5');
   assert.equal(chat.model.displayName, 'Opus 5.5');
   assert.equal(chat.effort, 'high');
+  assert.equal(chat.usage.total, 16700);
+  assert.equal(chat.usage.quotas[0].percent, 23.5);
+  assert.equal(chat.usage.quotas[0].minutes, 300);
   const saved = await readFile(path.join(folder, 'chat.json'), 'utf8');
   assert.doesNotMatch(saved, /secret|private|rate|cost/);
 });
@@ -66,9 +69,34 @@ test('a Claude chat starts with the reporter unless the person has their own sta
   // The model and settings come before --add-dir, which takes every argument after it.
   if (!inventory().find(item => item.id === 'claude')?.available) return;
   const command = terminalCommand('claude', { model: 'claude-opus-5-5', settings: file, readDir: project });
-  const script = process.platform === 'win32' ? Buffer.from(command.args.at(-1), 'base64').toString('utf16le') : command.args.join(' ');
-  assert.ok(script.indexOf('--model') > 0 && script.indexOf('--model') < script.indexOf('--settings') && script.indexOf('--settings') < script.indexOf('--add-dir'));
+  const script = command.args.includes('-EncodedCommand') ? Buffer.from(command.args.at(-1), 'base64').toString('utf16le') : command.args.join(' ');
+  assert.match(script, /--model.*--settings.*--add-dir/);
   assert.throws(() => terminalCommand('claude', { model: '--dangerously-skip-permissions' }), /listed models/);
+});
+
+test('Antigravity reports quota and token totals while preserving custom status line settings', async () => {
+  const state = await temp('antigravity-status-');
+  const session = { id: 'chat-1', agent: 'antigravity', cwd: state };
+  const env = { ...process.env, ANTIGRAVITY_HOME: state };
+  const settings = await statusSettings(state, session, env);
+  const { statusLine } = JSON.parse(await readFile(settings, 'utf8'));
+  assert.equal(statusLine.stack_with_default, true);
+  if (process.platform === 'win32') {
+    assert.equal(statusLine.command, 'call %BENTO_AGY_STATUS_REPORTER%');
+    assert.match(antigravityStatusEnvironment(settings).BENTO_AGY_STATUS_REPORTER, /"[^"]*node\.exe" "[^"]+claude-statusline\.mjs" "[^"]+chat-1\.json"$/i);
+  }
+  const reset = Date.now() + 3600000;
+  const file = path.join(path.dirname(settings), 'chat-1.json');
+  await report(file, {
+    product: 'antigravity', session_id: 'conversation', email: 'private@example.com',
+    context_window: { total_input_tokens: 500, total_output_tokens: 200 },
+    quota: { 'gemini-weekly': { remaining_fraction: 0.75, reset_time: new Date(reset).toISOString() }, disabled: { remaining_fraction: 0, disabled: true } },
+  });
+  const { chat } = await readStatus(state, session.id, 'antigravity');
+  assert.deepEqual(chat.usage, { total: 700, quotas: [{ key: 'gemini-weekly', label: 'gemini-weekly', minutes: null, percent: 25, remaining: null, resetsAt: reset }] });
+  assert.doesNotMatch(await readFile(file, 'utf8'), /private|email/);
+  await writeFile(path.join(state, 'settings.json'), '{"statusLine":{"enabled":false}}');
+  assert.equal(await statusSettings(state, session, env), null);
 });
 
 test('the model list comes from Claude Code\'s catalog cache, with aliases as the fallback', async () => {

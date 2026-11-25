@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from 'react'
 import type { AgentInfo, ChatSession } from '../desktop/types'
+import type { UiLanguage } from '../../desktop/service/language.mjs'
 import { resetMobileNavigation } from './app-state'
 import { clearVoiceDrafts, type VoiceDraft } from './voice-drafts'
 import { anySignal } from '../lib/abort'
+import { tNow } from '../lib/i18n/translate'
 
 export interface DictationInfo { available: boolean; provider: string | null; providers?: { id: string; label: string; available: boolean; detail: string }[]; maxSeconds: number; maxBytes: number }
 
@@ -10,15 +12,17 @@ interface MobileState {
   ready: boolean; authenticated: boolean; connected: boolean; error: string
   sessions: ChatSession[]; agents: AgentInfo[]; selectedId: string | null
   device?: { id: string; name: string }; defaultAgent?: string; defaultBypass?: boolean
+  uiLanguage?: UiLanguage
   dictation?: DictationInfo
   mutedChats?: string[]
 }
-export interface MobileEvent { type: string; id?: string; session?: ChatSession; sessions?: ChatSession[]; data?: string; sequence?: number; error?: string; dictation?: DictationInfo; mutedChats?: string[] }
+export interface MobileEvent { type: string; id?: string; session?: ChatSession; sessions?: ChatSession[]; data?: string; sequence?: number; error?: string; dictation?: DictationInfo; uiLanguage?: UiLanguage; mutedChats?: string[] }
 let state: MobileState = { ready: false, authenticated: false, connected: false, error: '', sessions: [], agents: [], selectedId: localStorage.getItem('mrmak.mobile.selected') }
 const listeners = new Set<() => void>(), events = new Set<(event: MobileEvent) => void>()
 let socket: WebSocket | null = null, timer = 0, heartbeat = 0, handshake = 0, starting = false, stopped = false, connectionVersion = 0
 let bootstrapAbort: AbortController | null = null, lastResume = 0, authRejected = false
 const update = (value: Partial<MobileState>) => { state = { ...state, ...value }; listeners.forEach(listener => listener()) }
+export const mobileState = () => state
 export function useMobile() { return useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener) }, () => state) }
 export class MobileError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status } }
 export async function mobileApi<T = unknown>(route: string, data?: unknown, signal?: AbortSignal): Promise<T> {
@@ -27,20 +31,20 @@ export async function mobileApi<T = unknown>(route: string, data?: unknown, sign
   if (signal?.aborted) throw new DOMException('Connection attempt cancelled', 'AbortError')
   if (!response.ok) {
     if (response.status === 401) { authRejected = true; update({ authenticated: false, connected: false }); socket?.close() }
-    throw new MobileError(result.error || 'Could not connect to your computer.', response.status)
+    throw new MobileError(result.error || tNow('mobileClient.connectFailed'), response.status)
   }
   return result
 }
 export async function uploadMobileImage(file: File): Promise<{ id: string; name: string }> {
   const response = await fetch('/mobile/api/images', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file, signal: AbortSignal.timeout(60000) })
   const result = await response.json()
-  if (!response.ok) throw new Error(result.error || 'Image upload failed.')
+  if (!response.ok) throw new Error(result.error || tNow('mobileClient.uploadFailed'))
   return result
 }
 export async function transcribeMobileAudio(recording: VoiceDraft, signal: AbortSignal): Promise<{ text: string }> {
   const response = await fetch('/mobile/api/transcribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': recording.audio.type, 'X-Transcription-Id': recording.id }, body: recording.audio, signal: anySignal([signal, AbortSignal.timeout(270000)]) })
   const result = await response.json()
-  if (!response.ok) throw new MobileError(result.error || 'Could not transcribe this recording. Try again.', response.status)
+  if (!response.ok) throw new MobileError(result.error || tNow('mobileClient.transcribeFailed'), response.status)
   return result
 }
 export function selectMobileChat(id: string) { localStorage.setItem('mrmak.mobile.selected', id); update({ selectedId: id }) }
@@ -67,7 +71,7 @@ let lastReply = 0, lastPing = 0
 function recoverSocket(ws: WebSocket) {
   if (socket !== ws) return
   socket = null; clearTimeout(handshake); clearInterval(heartbeat)
-  update({ connected: false, error: 'Connection stalled. Reconnecting…' })
+  update({ connected: false, error: tNow('mobileClient.stalled') })
   events.forEach(listener => listener({ type: 'disconnected' }))
   ws.close(); reconnect()
 }
@@ -77,7 +81,7 @@ export async function startMobile() {
   starting = true
   const version = connectionVersion, controller = new AbortController(); bootstrapAbort = controller
   try {
-    const initial = await mobileApi<Pick<MobileState, 'sessions' | 'agents' | 'device' | 'defaultAgent' | 'defaultBypass' | 'dictation' | 'mutedChats'>>('/bootstrap', undefined, anySignal([controller.signal, AbortSignal.timeout(8000)]))
+    const initial = await mobileApi<Pick<MobileState, 'sessions' | 'agents' | 'device' | 'defaultAgent' | 'defaultBypass' | 'uiLanguage' | 'dictation' | 'mutedChats'>>('/bootstrap', undefined, anySignal([controller.signal, AbortSignal.timeout(8000)]))
     if (version !== connectionVersion || controller.signal.aborted) return
     authRejected = false
     update({ ...initial, ready: true, authenticated: true, error: '', selectedId: initial.sessions.some(item => item.id === state.selectedId) ? state.selectedId : null })
@@ -91,8 +95,9 @@ export async function startMobile() {
       if (event.type === 'connected') { clearTimeout(handshake); update({ connected: true, sessions: event.sessions || state.sessions, error: '' }) }
       if (event.type === 'session' && event.session) { const next = event.session; update({ sessions: state.sessions.some(item => item.id === next.id) ? state.sessions.map(item => item.id === next.id ? next : item) : [...state.sessions, next] }) }
       if (event.type === 'dictation' && event.dictation) update({ dictation: event.dictation })
+      if (event.type === 'language' && event.uiLanguage) update({ uiLanguage: event.uiLanguage })
       if (event.type === 'muted' && Array.isArray(event.mutedChats)) update({ mutedChats: event.mutedChats })
-      if (event.type === 'error') update({ error: event.error || 'Connection error' })
+      if (event.type === 'error') update({ error: event.error || tNow('client.connectionError') })
       events.forEach(listener => listener(event))
     }
     ws.onclose = () => { if (socket !== ws) return; socket = null; clearTimeout(handshake); clearInterval(heartbeat); update({ connected: false }); events.forEach(listener => listener({ type: 'disconnected' })); reconnect() }
@@ -106,7 +111,7 @@ export async function startMobile() {
     }, 5000)
   } catch (error) {
     if (version !== connectionVersion || controller.signal.aborted) return
-    update({ ready: true, connected: false, error: error instanceof MobileError && error.status === 401 ? '' : 'Your computer is unavailable. Keep Bento Workspace running and Tailscale connected.' })
+    update({ ready: true, connected: false, error: error instanceof MobileError && error.status === 401 ? '' : tNow('mobileClient.computerUnavailable') })
     if (!(error instanceof MobileError && error.status === 401)) reconnect()
   } finally { if (version === connectionVersion) { starting = false; bootstrapAbort = null } }
 }
@@ -125,5 +130,6 @@ window.addEventListener('pagehide', releaseConnection)
 window.addEventListener('pageshow', resumeMobile)
 
 export async function chooseMobileDictation(provider: string) { const dictation = await mobileApi<DictationInfo>('/dictation', { provider }); update({ dictation }); return dictation }
+export async function chooseMobileLanguage(language: UiLanguage) { const { uiLanguage } = await mobileApi<{ uiLanguage: UiLanguage }>('/language', { language }); update({ uiLanguage }); return uiLanguage }
 // Muting is per chat and shared by every paired phone.
 export async function muteMobileChat(id: string, muted: boolean) { const { mutedChats } = await mobileApi<{ mutedChats: string[] }>(`/sessions/${id}/mute`, { muted }); update({ mutedChats }); return mutedChats }

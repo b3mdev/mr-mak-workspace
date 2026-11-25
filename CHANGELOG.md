@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Choose English or Brazilian Portuguese for the desktop and paired phone interface. Existing Workspace content and agent messages retain their own language.
+- See Codex, Claude Code and Antigravity usage on the desktop Workspace home. Available totals and quota windows depend on what each CLI reports.
+- See an ear icon while Talk to Bento is listening in Workspace or Chats.
+- Read conversations aloud offline in Brazilian Portuguese with Dora, Alex or Santa when Kokoro is set up. Talk to Bento honors an explicit saved spoken-language preference.
+
 ## 0.6.7 - 2026-11-25
 
 - Rename the app to Bento Workspace and use separate bem-te-vi icons for Workspace and Chats.

@@ -13,7 +13,7 @@ import { englishTitle, groupLabel, restoredTitle } from './titles.mjs';
 import { defaultWorkerEffort, workerEfforts } from './effort.mjs';
 import { projectKey } from './recent-projects.mjs';
 import { rememberedChoice } from './chat-models.mjs';
-import { statusSettings } from './claude-status.mjs';
+import { antigravityStatusEnvironment, statusSettings } from './claude-status.mjs';
 import { ptyOptions } from './platform.mjs';
 import { composerText, terminalPrompt } from './terminal-prompt.mjs';
 import { opencodeVersion, opencodeEnvironment, readOpencodeState, watchOpencode } from './opencode.mjs';
@@ -194,7 +194,8 @@ export class Sessions extends EventEmitter {
     const antigravityLog = session.agent === 'antigravity' ? await prepareAntigravityLog(this.stateDir, session.id) : undefined;
     const noDaemon = session.agent === 'codex' && await codexSupportsNoDaemon(env);
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
-    const settings = session.agent === 'claude' ? await statusSettings(this.stateDir, session, env).catch(() => null) : undefined;
+    const settings = await statusSettings(this.stateDir, session, env).catch(() => null);
+    if (session.agent === 'antigravity') Object.assign(env, antigravityStatusEnvironment(settings));
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
     const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, nativeId: session.nativeId, effort: session.effort, model: session.agent === 'claude' ? session.model : undefined, settings, opencodeMajor, antigravityLog, noDaemon, ...first });
     if (session.agent === 'codex') env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = `mrmak_chat_${session.id}`;
