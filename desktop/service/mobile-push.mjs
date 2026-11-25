@@ -88,7 +88,7 @@ export class MobilePush {
     // Web Push requires an https: or mailto: contact; the tailnet address identifies this app.
     if (devices.length && this.gateway.origin.startsWith('https://')) {
       const { publicKey, privateKey } = await this.keys();
-      const title = String(session.name || 'Mr. Mak').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 80) || 'Mr. Mak';
+      const title = String(session.name || 'Bento Workspace').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 80) || 'Bento Workspace';
       const payload = JSON.stringify({ title, body, chat: session.id });
       // A newer notice for the same chat replaces one the push service still holds.
       const options = { TTL: 3600, urgency: 'high', timeout: 15000, vapidDetails: { subject: this.gateway.origin, publicKey, privateKey }, ...(uuid(session.id) ? { topic: session.id.replaceAll('-', '') } : {}) };

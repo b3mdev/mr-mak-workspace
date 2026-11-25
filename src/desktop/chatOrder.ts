@@ -1,7 +1,11 @@
 import type { ChatSession } from './types'
 
 // Windows folders (drive letter or backslashes) compare without case.
-export const projectKey = (folder: string) => { const clean = folder.replace(/[\\/]+$/, ''); return /^[a-z]:|\\/i.test(clean) ? clean.toLowerCase() : clean }
+export function projectKey(folder: string) {
+  const clean = folder.replace(/[\\/]+$/, '')
+  if (!/^[a-z]:|\\|^\/\//i.test(clean)) return clean
+  return clean.replace(/\//g, '\\').replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '').toLowerCase()
+}
 export const projectName = (folder: string) => folder.split(/[\\/]/).filter(Boolean).slice(-1)[0] || folder
 
 export const tabColors = [

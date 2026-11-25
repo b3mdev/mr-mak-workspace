@@ -41,7 +41,7 @@ export async function api<T>(path: string, data?: unknown, method?: string, opti
     body: data === undefined ? undefined : JSON.stringify(data),
   })
   const value = await response.json()
-  if (!response.ok) throw new Error(value.error || `Request failed (${response.status})`)
+  if (!response.ok) throw Object.assign(new Error(value.error || `Request failed (${response.status})`), typeof value.code === 'string' ? { code: value.code } : {})
   return value as T
 }
 export function pickFiles(): Promise<string[]> {
@@ -97,7 +97,6 @@ export async function startDesktop() {
   try {
     const initial = await api<DesktopState>('/bootstrap')
     const selected = localStorage.getItem('mrmak.selectedChat')
-    if (surface === 'workspace' && !location.hash && initial.settings.workspaceRoute?.startsWith('#/')) history.replaceState(null, '', location.pathname + location.search + initial.settings.workspaceRoute)
     update({ ...initial, ready: true, error: null, selectedId: initial.sessions.some(item => item.id === selected) ? selected : initial.selectedId })
     connect()
   } catch (error) { started = false; reportError(error) }

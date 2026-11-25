@@ -1,6 +1,6 @@
 # Getting started
 
-Mr. Mak is a local desktop workspace for working with several agents. Its files
+Bento Workspace is a local desktop workspace for working with several agents. Its files
 are ordinary project files, and its chats are ordinary CLI sessions. You can
 keep using the same agents outside the app.
 
@@ -23,10 +23,28 @@ runtime and local service and installs for the current Windows user. WebView2
 is installed by its bootstrapper if needed. No administrator terminal is needed
 for ordinary app use.
 
-Run **Start Mr. Mak.cmd** from the cloned folder. The app remembers the selected
+Run **Start Bento Workspace.cmd** from the cloned folder. The app remembers the selected
 repository. It opens Workspace and Chats as separate windows with separate
 taskbar identities. Closing a chat saves it to History; restoring its full
 conversation also relies on that CLI's native session files.
+
+### Update an existing Windows installation
+
+1. Locate the current installation and the Workspace folder that contains
+   `workspace/workspace.json`. Keep that folder and its `.mrmak` data in place.
+2. Wait for active chats to finish, then use **Quit** from the app's tray menu.
+   Run the Bento Windows installer from the matching GitHub Release and select
+   the existing installation directory when the installer offers a choice.
+3. Open the installed app on the same Workspace folder with `--repo`, or use
+   **Start Bento Workspace.cmd** if the folder has the updated launcher. Verify
+   Home, Chats and History before joining the network.
+4. Connect Tailscale to the same private network as the central computer. In
+   **Workspace → Rede**, paste the central computer's fresh invitation into
+   **Convite recebido** and select **Conectar a uma central**. Invitations
+   expire after ten minutes and can be used by one computer. Keep them private.
+
+Each computer keeps its own projects, chat history and CLI sign-ins. The network
+panel shares task status, including conversation titles, agents and timestamps.
 
 ## Connect one agent
 

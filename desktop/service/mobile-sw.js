@@ -1,5 +1,5 @@
 /* Cache the application shell only. Chats, images, reports and API replies never enter this cache. */
-const CACHE = 'mrmak-mobile-shell-0.5';
+const CACHE = 'mrmak-mobile-shell-0.6-bento-network';
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.add('/mobile/'))); self.skipWaiting(); });
 self.addEventListener('activate', event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('mrmak-mobile-shell-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', event => {
@@ -16,7 +16,7 @@ self.addEventListener('push', event => {
   let data = {};
   try { data = event.data?.json() || {}; } catch { /* An unreadable push still tells the person to look. */ }
   const chat = typeof data.chat === 'string' && /^[a-f0-9-]{36}$/i.test(data.chat) ? data.chat : null;
-  event.waitUntil(self.registration.showNotification(typeof data.title === 'string' && data.title ? data.title.slice(0, 80) : 'Mr. Mak', { body: typeof data.body === 'string' && data.body ? data.body.slice(0, 120) : 'A chat is waiting for you.', tag: chat ? `chat-${chat}` : 'mrmak', renotify: true, icon: '/assets/mak-mobile-192.png', data: { chat } }));
+  event.waitUntil(self.registration.showNotification(typeof data.title === 'string' && data.title ? data.title.slice(0, 80) : 'Bento Workspace', { body: typeof data.body === 'string' && data.body ? data.body.slice(0, 120) : 'A chat is waiting for you.', tag: chat ? `chat-${chat}` : 'mrmak', renotify: true, icon: '/assets/bento-icon-192.png', data: { chat } }));
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();

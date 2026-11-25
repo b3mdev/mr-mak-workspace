@@ -11,10 +11,11 @@ chat finishes or waits for you.
 1. Install [Tailscale](https://tailscale.com/download) on your computer and phone.
    Sign in to the same Tailscale account on both and keep them connected.
 2. Open Mr. Mak **Chats** and select the **phone icon** in the top bar.
-3. Choose **Enable & show QR code**. If Tailscale requests HTTPS permission,
-   follow its [Serve setup](https://tailscale.com/docs/features/tailscale-serve)
-   and try again. On Windows, Tailscale may require administrator permission
-   to configure Serve. You do not need to run agent chats as administrator.
+3. Choose **Enable & show QR code**. When Bento reports missing HTTPS
+   certificates, a tailnet administrator can enable them under **HTTPS
+   Certificates** in the [Tailscale DNS console](https://login.tailscale.com/admin/dns).
+   Then retry in Bento. On Windows, the initial Serve configuration may require
+   administrator permission.
 4. Open your phone camera or QR scanner and point it at the code on the computer
    screen. Tap the detected link to open your browser. Name the device and
    select **Request connection**.
@@ -29,6 +30,25 @@ server, public domain or new model API key. Existing CLI account limits still ap
 The optional microphone button uses a separately billed transcription API.
 Mr. Mak configures a private Tailscale Serve route on an available HTTPS port
 between 8443 and 8446. It preserves existing routes and never enables Funnel.
+
+## Rede Bento
+
+Open **Rede** in the Workspace toolbar on the computer that will collect tasks.
+Use **Gerar convite para outro computador** and paste the invitation into **Rede →
+Conectar a uma central** on the other computer. Generate a new invitation for
+each computer. Invitations expire after ten minutes.
+
+Keep Bento and Tailscale running on the central computer, the other computers,
+and the phone. Pair the phone through **Mobile access** in Chats on the central
+computer and tap **Rede** in the phone's navigation. The board shows the open
+agent chats by computer and refreshes automatically. You can filter by computer
+and open a chat on the computer the phone is paired to.
+
+Computer connections share task titles, agent names, activity, and timestamps.
+The connection is read-only and limited to these fields.
+Use **Remover da rede** on the central computer to revoke a computer's access.
+An offline computer is labeled separately from the status of its last received
+tasks. Snapshots are refreshed when connected computers check in after a restart.
 
 ## Using the phone
 

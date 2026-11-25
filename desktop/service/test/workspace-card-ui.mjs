@@ -14,6 +14,8 @@ import { launchBrowser } from './browser.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 await mkdir(path.join(root, '.cache'), { recursive: true });
 const repo = await mkdtemp(path.join(root, '.cache', 'workspace-card-ui-'));
+process.env.CODEX_HOME = path.join(repo, 'codex');
+process.env.CLAUDE_CONFIG_DIR = path.join(repo, 'claude');
 const ui = process.env.MRMAK_TEST_UI || path.join(root, 'dist');
 await cp(ui, path.join(repo, 'ui'), { recursive: true });
 await cp(path.join(root, 'public', 'assets'), path.join(repo, 'ui', 'assets'), { recursive: true });

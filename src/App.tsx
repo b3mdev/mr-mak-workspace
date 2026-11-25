@@ -8,7 +8,7 @@ import Topbar from './components/Topbar'
 import HomeGrid from './components/HomeGrid'
 import EntityControls from './components/EntityControls'
 import ReportBoundary from './components/ReportBoundary'
-import { contentUrl, isDesktop } from './desktop/client'
+import { contentUrl, isDesktop, sendEvent } from './desktop/client'
 
 const Compare3D = lazy(() => import('./components/Compare3D'))
 const ReportViewer = lazy(() => import('./components/ReportViewer'))
@@ -31,6 +31,7 @@ export default function App() {
     () => isDesktop || localStorage.getItem('mak.sidebarCollapsed') === '1',
   )
   const searchRef = useRef<HTMLInputElement>(null)
+  const homeSearchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     localStorage.setItem('mak.sidebarCollapsed', collapsed ? '1' : '0')
@@ -61,7 +62,8 @@ export default function App() {
       if (typing) return
       if (ev.key === '/') {
         ev.preventDefault()
-        searchRef.current?.focus()
+        const search = homeSearchRef.current ?? searchRef.current
+        search?.focus()
       } else if (ev.key === '[') {
         ev.preventDefault()
         setCollapsed(v => !v)
@@ -72,17 +74,20 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = entity ? `Mr. Mak — ${entity.title}` : 'Mr. Mak — Workspace'
+    document.title = entity ? `Bento Workspace — ${entity.title}` : 'Bento Workspace'
   }, [entity])
 
   const goHome = useCallback(() => {
     history.pushState(null, '', window.location.pathname + window.location.search)
     setRoute({ id: null, step: -1 })
+    if (isDesktop) sendEvent({ type: 'workspace-route', route: '' })
   }, [])
 
   const selectStep = useCallback((id: string, index: number) => {
-    history.replaceState(null, '', entityHash(id, index))
+    const route = entityHash(id, index)
+    history.replaceState(null, '', route)
     setRoute({ id, step: index })
+    if (isDesktop) sendEvent({ type: 'workspace-route', route })
   }, [])
 
   if (!workspace) {
@@ -103,7 +108,7 @@ export default function App() {
     e.status === 'archived' || (!e.pinned && !e.sample && lastTouched(e) < cutoff)
   const matchesQuery = (e: WorkspaceEntity) =>
     !searching ||
-    [e.title, e.description, e.category, e.id].some(s => s && s.toLowerCase().includes(q))
+    [e.title, e.description, e.category, e.id, ...e.steps.map(step => step.name)].some(s => s && s.toLowerCase().includes(q))
 
   // Search digs through everything, archive included; otherwise the
   // archive stays hidden behind the toggle.
@@ -147,10 +152,10 @@ export default function App() {
       <button
         className="sidebar-reopen"
         onClick={() => setCollapsed(false)}
-        title="Show menu — press Mr. Mak's nose ( [ )"
+        title="Show menu ( [ )"
         aria-label="Show menu"
       >
-        <MakLogo size={38} animated={route.id !== 'my-dream-game'} />
+        <MakLogo size={38} />
       </button>
 
       <main className="main">
@@ -169,21 +174,24 @@ export default function App() {
           {entity && reportUrl && step?.viewer === 'card' ? (
             <Suspense fallback={<div className="report-loading">Opening card…</div>}><EditableCard key={`${entity.id}:${stepIndex}`} url={reportUrl} entityId={entity.id} step={stepIndex} /></Suspense>
           ) : entity && reportUrl && step?.viewer === 'compare3d' ? (
-            <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><Compare3D
+            <Suspense fallback={<div className="boot"><MakLogo size={56} /></div>}><Compare3D
               key={reportUrl}
               manifestUrl={reportUrl}
               baseUrl={reportUrl.slice(0, reportUrl.lastIndexOf('/'))}
             /></Suspense>
           ) : entity && reportUrl ? (
-            <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><ReportViewer key={reportUrl} url={reportUrl} title={step?.name ?? entity.title} relativePath={`workspace/${entity.folder}/${step?.path}`} /></Suspense>
+            <Suspense fallback={<div className="boot"><MakLogo size={56} /></div>}><ReportViewer key={reportUrl} url={reportUrl} title={step?.name ?? entity.title} relativePath={`workspace/${entity.folder}/${step?.path}`} /></Suspense>
           ) : (
             <HomeGrid
-              entities={entities}
               pinned={pinned}
               grouped={grouped}
               offline={offline}
-              searching={searching}
               query={query}
+              onQuery={setQuery}
+              searchRef={homeSearchRef}
+              archivedCount={archivedCount}
+              showArchived={showArchived}
+              onToggleArchived={() => setShowArchived(v => !v)}
             />
           )}
           </ReportBoundary>

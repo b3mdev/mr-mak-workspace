@@ -12,12 +12,12 @@ import { EntityStatusButton } from './EntityControls'
  * block of the home grid; mirrored as `.mak-card` in
  * scripts/shared/report_style.py for generated reports.
  */
-export default function MakCard({ entity }: { entity: WorkspaceEntity }) {
+export default function MakCard({ entity, discoveredCover }: { entity: WorkspaceEntity; discoveredCover?: string }) {
   const steps = entity.steps.length
   // Cover, phase and progress are optional; a card without them is unchanged.
   // A cover that fails to load is dropped, so it leaves no empty band.
   const cover = cardCover(entity), icon = cardIcon(entity)
-  const coverUrl = cover ? contentUrl(cardImageUrl(entity, cover)) : null
+  const coverUrl = cover ? contentUrl(cardImageUrl(entity, cover)) : discoveredCover || null
   const [failedCover, setFailedCover] = useState<string | null>(null)
   const showCover = coverUrl !== null && failedCover !== coverUrl
   const phase = cardPhase(entity)

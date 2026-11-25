@@ -5,7 +5,7 @@ import type { ChatSession } from './types'
 
 // The chat footer's "Opus · high" chip. Its menu applies a model or effort to the
 // running Claude chat at once, through `/model <id>` and `/effort <level>`: the CLI
-// opens no picker for a command with an argument, and Mr. Mak confirms Claude Code's
+// opens no picker for a command with an argument, and Bento Workspace confirms Claude Code's
 // prompt-cache warning itself, so nothing appears in the chat as a question. Only what
 // Claude Code confirms changes the chip; a refused or unconfirmed change keeps the
 // previous choice and shows the reason in the menu.

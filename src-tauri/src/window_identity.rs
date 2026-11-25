@@ -43,7 +43,7 @@ pub fn set_window(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::erro
     window.set_icon(tauri::image::Image::from_bytes(png)?)?;
     let icon = icon_path(app, label)?;
     let command = format!("\"{}\" --show {label}", std::env::current_exe()?.display());
-    let title = if label == "chats" { "Mr. Mak Chats" } else { "Mr. Mak Workspace" };
+    let title = if label == "chats" { "Bento Workspace — Chats" } else { "Bento Workspace" };
     unsafe {
         let hwnd = window.hwnd()?.0;
         let dpi = GetDpiForWindow(hwnd);
@@ -64,10 +64,14 @@ pub fn set_window(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::erro
 
 pub fn refresh_shortcuts(app: &tauri::AppHandle) {
     let mut shortcuts = Vec::new();
-    if let Ok(desktop) = app.path().desktop_dir() { shortcuts.push(desktop.join("Mr. Mak Workspace.lnk")); }
+    if let Ok(desktop) = app.path().desktop_dir() {
+        for name in ["Bento Workspace.lnk", "Mr. Mak Workspace.lnk"] { shortcuts.push(desktop.join(name)); }
+    }
     if let Some(roaming) = std::env::var_os("APPDATA") {
         let root = PathBuf::from(roaming);
-        shortcuts.push(root.join("Microsoft/Windows/Start Menu/Programs/Mr. Mak Workspace.lnk"));
+        for name in ["Bento Workspace.lnk", "Mr. Mak Workspace.lnk"] {
+            shortcuts.push(root.join("Microsoft/Windows/Start Menu/Programs").join(name));
+        }
         let pinned = root.join("Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar");
         if let Ok(entries) = fs::read_dir(pinned) {
             shortcuts.extend(entries.flatten().map(|entry| entry.path()).filter(|path| path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))));
@@ -92,10 +96,10 @@ fn refresh_shortcut(app: &tauri::AppHandle, path: &Path) -> Result<(), Box<dyn s
         let mut arguments = text(&arguments);
         let words: Vec<String> = arguments.split_whitespace().map(|word| word.trim_matches('"').to_owned()).collect();
         let selected = crate::requested_window(&words);
-        let label = selected.unwrap_or("chats");
-        // Migrate an existing shared pin to Chats. Preserve --repo and any other
-        // arguments, placement and the user's pin/unpin choices.
-        if selected.is_none() { arguments = format!("{arguments} --show chats").trim().to_owned(); }
+        let label = selected.unwrap_or("workspace");
+        // General shortcuts open the Workspace. Explicit window pins and other
+        // arguments retain their existing destination.
+        if selected.is_none() { arguments = format!("{arguments} --show workspace").trim().to_owned(); }
         let icon = icon_path(app, label)?;
         let properties: IPropertyStore = link.cast()?;
         let current_id = properties.GetValue(&PKEY_AppUserModel_ID)?.to_string();

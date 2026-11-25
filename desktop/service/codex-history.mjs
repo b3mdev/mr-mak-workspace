@@ -123,7 +123,7 @@ export async function newerCodexRollout(session, current, { now = Date.now(), ho
 
 // Folders where Codex ran recently, newest first. Bounded: only the latest day
 // folders and files are opened, and only each file's first metadata record is read.
-export async function codexProjects({ home = codexHome(), days = 60, files = 400 } = {}) {
+export async function codexProjects({ home = codexHome(), days = 60, files = 400, archived = false } = {}) {
   const names = async folder => (await readdir(folder, { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory() && /^\d+$/.test(entry.name)).map(entry => entry.name).sort().reverse();
   const folders = [];
   for (const year of await names(path.join(home, 'sessions')))
@@ -132,6 +132,7 @@ export async function codexProjects({ home = codexHome(), days = 60, files = 400
         if (folders.length >= days) break;
         folders.push(path.join(home, 'sessions', year, month, day));
       }
+  if (archived) folders.push(path.join(home, 'archived_sessions'));
   const projects = new Map();
   let opened = 0;
   for (const folder of folders) {
@@ -145,4 +146,25 @@ export async function codexProjects({ home = codexHome(), days = 60, files = 400
     }
   }
   return [...projects.values()];
+}
+
+// The desktop index can include older projects and sessions that have no local
+// rollout file. Query folder paths and dates only, with a CLI fallback.
+export async function codexProjectIndex(home = codexHome()) {
+  const names = await readdir(home).catch(() => []);
+  const states = names.filter(name => /^state_\d+\.sqlite$/.test(name)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
+  if (states.length) {
+    let db;
+    try {
+      const { DatabaseSync } = await import('node:sqlite');
+      db = new DatabaseSync(path.join(home, states[0]), { readOnly: true });
+      const folders = db.prepare("SELECT cwd AS path, MAX(updated_at) AS at FROM threads WHERE cwd <> '' GROUP BY cwd").all();
+      const roots = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_roots'").get()
+        ? db.prepare("SELECT DISTINCT path FROM project_roots WHERE path <> ''").all() : [];
+      const recent = await codexProjects({ home });
+      return [...roots, ...folders].map(({ path, at }) => ({ path, source: 'codex', at: at > 0 ? new Date(at * 1000).toISOString() : null })).concat(recent);
+    } catch { /* Older Codex versions may have a different local schema. */ }
+    finally { db?.close(); }
+  }
+  return codexProjects({ home, days: Infinity, files: Infinity, archived: true });
 }

@@ -63,10 +63,9 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <MakLogo size={54} animated={activeId !== 'my-dream-game'} />
+        <MakLogo size={44} />
         <div className="brand-text">
-          <MakText height={26} animated={activeId !== 'my-dream-game'} />
-          <span className="brand-sub">workspace</span>
+          <MakText height={22} animated={activeId !== 'my-dream-game'} />
         </div>
         <button
           className="sidebar-collapse"

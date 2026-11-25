@@ -9,7 +9,7 @@ import { body, equalSecret, json, publicError, readJson, realFile, saveJson, sec
 import { serveFile } from './files.mjs';
 import { MAX_IMAGE_BYTES, attachmentText } from './attachments.mjs';
 import { inventory } from './agents.mjs';
-import { TailscaleTransport } from './mobile-tailscale.mjs';
+import { TailscaleTransport, tailscaleHttpsRequired } from './mobile-tailscale.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
 import { LocalReadAloud } from './local-read-aloud.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
@@ -29,8 +29,8 @@ const DEVICE_IDLE_TTL = 30 * 24 * 60 * 60 * 1000;
 const send = (ws, value) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
 
 export class MobileGateway {
-  constructor({ repo, uiDir, stateDir, sessions, attachments, settings, changed, closeChat, transport = new TailscaleTransport(), dictation = new MobileDictation(repo), chooseDictation, readAloud = new LocalReadAloud(repo), transcripts = new ConversationTranscripts(), sendPush }) {
-    Object.assign(this, { repo, uiDir, sessions, attachments, settings, changed, closeChat, transport });
+  constructor({ repo, uiDir, stateDir, sessions, attachments, settings, changed, closeChat, network, transport = new TailscaleTransport(), dictation = new MobileDictation(repo), chooseDictation, readAloud = new LocalReadAloud(repo), transcripts = new ConversationTranscripts(), sendPush }) {
+    Object.assign(this, { repo, uiDir, sessions, attachments, settings, changed, closeChat, network, transport });
     this.file = path.join(stateDir, 'mobile-access.json');
     this.saves = Promise.resolve(); this.pending = new Map(); this.clients = new Set(); this.inflight = new Map(); this.uploads = new Map(); this.queues = new Map();
     this.transcripts = transcripts; this.conversationMedia = new ConversationMedia(); this.active = false; this.error = ''; this.origin = ''; this.rates = new Map();
@@ -71,7 +71,7 @@ export class MobileGateway {
         else { ws.alive = false; ws.ping(); }
       }
     }, 30000); this.timer.unref();
-    if (this.state.enabled) await this.enable().catch(error => { this.error = publicError(error); });
+    if (this.state.enabled) await this.enable().catch(() => {});
     return this;
   }
   save() {
@@ -81,6 +81,7 @@ export class MobileGateway {
   status() {
     return {
       enabled: this.active, origin: this.active ? this.origin : '', error: this.error,
+      ...(this.errorCode ? { errorCode: this.errorCode } : {}),
       devices: this.state.devices.filter(device => this.validDevice(device)).map(({ hash: _hash, push: _push, ...device }) => ({ ...device, connected: [...this.clients].some(ws => ws.deviceId === device.id && ws.readyState === WebSocket.OPEN) })),
       pending: [...this.pending.values()].filter(item => item.expires > Date.now() && !item.approved).map(({ id, name, code, expires }) => ({ id, name, code, expires })),
     };
@@ -89,12 +90,12 @@ export class MobileGateway {
   async enable() {
     if (this.enabling) return this.enabling;
     this.enabling = (async () => {
-      this.error = '';
+      this.error = ''; this.errorCode = null;
       try {
         const route = await this.transport.enable(this.localOrigin, this.state.route);
         this.state.route = route; this.origin = route.origin;
         this.state.enabled = true; await this.save(); this.active = true; this.notify(); return this.status();
-      } catch (error) { this.active = false; this.error = publicError(error); this.notify(); throw error; }
+      } catch (error) { this.active = false; this.error = publicError(error); this.errorCode = error?.code === tailscaleHttpsRequired ? error.code : null; this.notify(); throw error; }
     })();
     try { return await this.enabling; } finally { this.enabling = null; }
   }
@@ -172,14 +173,14 @@ export class MobileGateway {
   }
   device(request) {
     const credential = String(request.headers.cookie || '').split(';').map(item => item.trim()).find(item => item.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-    if (!credential || credential.length > 100) fail('Connect this phone from the QR code in Mr. Mak Chats.', 401);
+    if (!credential || credential.length > 100) fail('Connect this phone from the QR code in Bento Workspace Chats.', 401);
     const hash = digest(credential), device = this.state.devices.find(item => this.validDevice(item) && equalSecret(item.hash, hash));
     if (!device) fail('This phone is disconnected. Scan a new QR code in Chats.', 401);
     this.touch(device);
     return device;
   }
   checkRequest(request, mutation = false) {
-    if (!this.active) fail('Mobile access is off. Enable it in Mr. Mak Chats.', 503);
+    if (!this.active) fail('Mobile access is off. Enable it in Bento Workspace Chats.', 503);
     if (request.headers.host !== new URL(this.origin).host) fail('Unexpected host', 403);
     if ((mutation || request.headers.origin) && request.headers.origin !== this.origin) fail('Unexpected origin', 403);
     // QR scanners can open the public app shell as a cross-site navigation.
@@ -284,6 +285,19 @@ export class MobileGateway {
       const mutation = !['GET', 'HEAD'].includes(request.method);
       this.checkRequest(request, mutation);
       const url = new URL(request.url, this.origin), route = url.pathname, method = request.method;
+      if (this.network && method === 'POST' && ['/mobile/network/join', '/mobile/network/tasks', '/mobile/network/leave'].includes(route)) {
+        // Serve supplies this identity header for signed-in tailnet devices and
+        // strips incoming copies. Computer tokens never authenticate phone APIs.
+        if (!request.headers['tailscale-user-login']) fail('Conecte o computador pelo Tailscale Serve privado.', 403);
+        if (!String(request.headers['content-type'] || '').startsWith('application/json')) fail('JSON is required', 415);
+        const credential = /^Bearer ([a-zA-Z0-9_-]{43})$/.exec(request.headers.authorization || '')?.[1];
+        if (!credential) fail('Computador não autorizado.', 401);
+        if (route.endsWith('/join')) return json(response, 200, await this.network.accept(credential, await body(request, 2048)));
+        const peer = this.network.authenticate(credential);
+        const data = await body(request, 128 * 1024);
+        if (route.endsWith('/leave')) { await this.network.remove(peer.id, peer.hash); return json(response, 200, { disconnected: true }); }
+        return json(response, 200, this.network.push(peer, data));
+      }
       if (route.startsWith('/mobile/api/')) {
         const binary = route === '/mobile/api/images' || route === '/mobile/api/transcribe';
         if (mutation && !binary && !String(request.headers['content-type'] || '').startsWith('application/json')) fail('JSON is required', 415);
@@ -301,6 +315,7 @@ export class MobileGateway {
           return json(response, 200, { status: 'connected' });
         }
         const device = this.device(request);
+        if (method === 'GET' && route === '/mobile/api/network' && this.network) return json(response, 200, this.network.dashboard());
         if (method === 'GET' && route === '/mobile/api/read-aloud') return json(response, 200, await this.readAloud.status());
         const media = /^\/mobile\/api\/sessions\/([a-f0-9-]{36})\/media\/([a-zA-Z0-9_-]{43})$/.exec(route);
         if (media && ['GET', 'HEAD'].includes(method)) { this.session(media[1]); return await this.conversationMedia.serve(request, response, media[1], media[2], device.id, url.searchParams.get('download') === '1'); }
@@ -362,7 +377,7 @@ export class MobileGateway {
       if (!['GET', 'HEAD'].includes(method)) fail('Not allowed', 405);
       if (route === '/mobile/manifest.webmanifest') {
         response.writeHead(200, { 'Content-Type': 'application/manifest+json' });
-        response.end(JSON.stringify({ id: '/mobile/', name: 'Mr. Mak Mobile', short_name: 'Mr. Mak', start_url: '/mobile/', scope: '/mobile/', display: 'standalone', background_color: '#0d0e12', theme_color: '#0d0e12', icons: [{ src: '/assets/mak-mobile-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' }, { src: '/assets/mak-mobile-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' }] })); return;
+        response.end(JSON.stringify({ id: '/mobile/', name: 'Bento Workspace', short_name: 'Bento', start_url: '/mobile/', scope: '/mobile/', display: 'standalone', background_color: '#0d0e12', theme_color: '#0d0e12', icons: [{ src: '/assets/bento-icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' }, { src: '/assets/bento-icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' }] })); return;
       }
       if (route === '/mobile/sw.js') {
         response.writeHead(200, { 'Content-Type': 'text/javascript', 'Service-Worker-Allowed': '/mobile/' });

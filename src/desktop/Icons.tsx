@@ -11,11 +11,15 @@ export function AgentLogo({ agent, size = 18 }: { agent: AgentId; size?: number 
   return <Icon name="terminal" size={size} />
 }
 
-export function Nose({ size = 30, tone = 'pink' }: { size?: number; tone?: 'pink' | 'black' }) {
-  return <MakLogo size={size} tone={tone} />
+export function Nose({ size = 30 }: { size?: number }) {
+  return <MakLogo size={size} />
 }
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
   const paths: Record<string, string> = {
+    network: 'M9 3h6v5H9ZM3 16h6v5H3ZM15 16h6v5h-6ZM12 8v4M6 16v-4h12v4',
+    computer: 'M3 4h18v12H3ZM12 16v4M8 20h8',
+    grid: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
+    list: 'M4 6h2m4 0h10M4 12h2m4 0h10M4 18h2m4 0h10',
     menu: 'M4 6h16M4 12h16M4 18h16',
     phone: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM10 5h4M11 19h2',
     help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM9.1 8a3 3 0 0 1 5.8 1c0 2-3 2-3 4M12 17h.01',

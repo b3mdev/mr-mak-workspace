@@ -5,7 +5,7 @@ export type ChatView = 'conversation' | 'terminal'
 const key = (id: string) => `mrmak.chatView.${id}`
 const read = (name: string) => { try { return localStorage.getItem(name) } catch { return null } }
 
-// Only these CLIs write a transcript Mr. Mak can read as a conversation; OpenCode's is its session store.
+// Only these CLIs write a transcript Bento Workspace can read as a conversation; OpenCode's is its session store.
 export const hasConversationView = (session: ChatSession) => session.agent === 'claude' || session.agent === 'codex' || session.agent === 'antigravity' || session.agent === 'opencode'
 
 export function chatView(session: ChatSession): ChatView {

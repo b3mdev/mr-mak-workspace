@@ -1,14 +1,19 @@
-# Mr. Mak Workspace
+# Bento Workspace
 
 Your CLI agents, a visual Workspace, and access from your phone.
 
-Mr. Mak has **two connected desktop windows**:
+Bento Workspace has **two connected desktop windows**:
 
 - **Chats** is where you give tasks to Codex, Claude Code, Antigravity, OpenCode or Kimi. Each
   conversation runs in a real CLI terminal, with its own tab and saved history.
 - **Workspace** is where you review the results: project pages, research, images,
   saved prompts and reports. Files, skills, MCP connections and settings sit
   alongside your work.
+
+The home screen lists project folders and their results in cards or a list. Open
+a project and select a conversation to open it directly in Chats. Use **Rede**
+to connect computers on a private Tailscale network and view their task status.
+See the [desktop update guide](docs/getting-started.md#update-an-existing-windows-installation).
 
 Keep the windows side by side, or minimize either one independently. You can
 leave Chats in view while working in Blender, a game engine or your browser.

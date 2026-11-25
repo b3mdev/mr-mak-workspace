@@ -106,7 +106,7 @@ export async function startMobile() {
     }, 5000)
   } catch (error) {
     if (version !== connectionVersion || controller.signal.aborted) return
-    update({ ready: true, connected: false, error: error instanceof MobileError && error.status === 401 ? '' : 'Your computer is unavailable. Keep Mr. Mak running and Tailscale connected.' })
+    update({ ready: true, connected: false, error: error instanceof MobileError && error.status === 401 ? '' : 'Your computer is unavailable. Keep Bento Workspace running and Tailscale connected.' })
     if (!(error instanceof MobileError && error.status === 401)) reconnect()
   } finally { if (version === connectionVersion) { starting = false; bootstrapAbort = null } }
 }

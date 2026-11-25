@@ -17,6 +17,8 @@ await writeFile(path.join(repo, 'workspace', 'sample', 'report.html'), report);
 const file = path.join(repo, 'workspace', 'workspace.json');
 const card = { id: 'sample', title: 'Character Workshop', description: 'A reviewable sample.', category: 'research', type: 'group', folder: 'sample', status: 'active', created: localDay(), steps: [{ name: 'Notes', path: 'report.html' }] };
 await writeFile(file, JSON.stringify({ entities: [card, { ...card, id: 'other', title: 'Another project', category: 'game' }, { ...card, id: 'old', title: 'Older project', created: '2020-01-01' }] }));
+await mkdir(path.join(repo, '.mrmak'));
+await writeFile(path.join(repo, '.mrmak', 'settings.json'), JSON.stringify({ workspaceRoute: '#/other/0' }));
 await cp(path.join(root, 'public', 'assets'), path.join(root, 'dist', 'assets'), { recursive: true });
 const service = await createService({ repo, uiDir: path.join(root, 'dist') });
 let browser;
@@ -28,6 +30,8 @@ try {
   page.setDefaultTimeout(15000); peer.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.workspace); await peer.goto(service.urls.workspace);
+  await expect(page.getByRole('heading', { name: 'Projetos', exact: true })).toBeVisible();
+  assert.equal(new URL(page.url()).hash, '', 'A saved report must not replace the project home at startup');
   const homeCard = page.locator('.home [data-card="sample"]');
   const dot = () => homeCard.getByRole('button', { name: /^Edit Character Workshop:/ });
   const menu = page.getByRole('dialog', { name: 'Card settings: Character Workshop' });

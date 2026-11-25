@@ -45,7 +45,7 @@ if [ "$(uname)" = Darwin ]; then
     npm run desktop:build -- --bundles app dmg
   fi
   echo "App ready in src-tauri/target/release/bundle/macos (disk image in bundle/dmg)."
-  echo "Drag Mr. Mak Workspace.app to Applications, then double-click 'Start Mr. Mak.command'."
+  echo "Drag Bento Workspace.app to Applications, then double-click 'Start Mr. Mak.command'."
 else
   npm run desktop:build:appimage
   echo "AppImage ready in src-tauri/target/release/bundle/appimage."

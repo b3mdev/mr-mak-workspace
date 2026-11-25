@@ -23,10 +23,13 @@ export interface ContextUsage {
   updatedAt: string | null; reason: 'waiting' | 'compacted' | 'unavailable'
 }
 export interface RecentProject { path: string; name: string; sources: ('workspace' | 'mrmak' | 'claude' | 'codex')[]; pinned: boolean; lastUsedAt: string | null }
+export interface ProjectResult { path: string; name: string; kind: 'video' | 'html' | 'pdf' | 'text' | 'archive' | 'document' }
+export interface GalleryProject extends RecentProject { cover: string | null; results: ProjectResult[] }
+export interface ProjectGallery { projects: GalleryProject[]; covers: Record<string, string> }
 export interface Handoff { status: 'summarizing' | 'opening' | 'done' | 'failed'; error?: string | null; sessionId?: string | null; file?: string | null; at: string }
 export interface Notice { id: string; sessionId: string; name: string; kind: string; text: string; at: string }
 export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[] }
-export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; workspaceRoute?: string | null; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
+export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
 export type SystemEventsMode = 'full' | 'compact' | 'hidden'
 export interface VoiceOwner { clientId: string; surface: 'chats' | 'workspace' }
 export interface FileEntry { name: string; path: string; directory: boolean; size: number; modifiedAt: string | null }

@@ -28,6 +28,9 @@ import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
 import { projectKey, recentProjects } from './recent-projects.mjs';
+import { projectGallery } from './project-gallery.mjs';
+import { DeviceNetwork } from './device-network.mjs';
+import { tailscaleHttpsRequired } from './mobile-tailscale.mjs';
 import { answerPrompt, readPrompt } from './terminal-prompt.mjs';
 import { FileInsights, folderMap } from './file-insights.mjs';
 import { applyChoice, liveStats, modelOptions, switchingModel } from './chat-models.mjs';
@@ -39,7 +42,7 @@ import { isThemePreference } from './appearance.mjs';
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -78,7 +81,10 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   };
   const projectList = () => recentProjects({ repo, sessions: sessions.list(), pinned: settings.pinnedProjects || [] });
   let selectedId = sessions.active().some(item => item.id === settings.selectedId) ? settings.selectedId : sessions.active()[0]?.id || null;
-  let workspaceRoute = settings.workspaceRoute || null;
+  // Each launch starts at the project home. The current route only matters to
+  // the live Workspace and is reported again when its window connects.
+  delete settings.workspaceRoute;
+  let workspaceRoute = null;
   let settingsTimer;
   let settingsSave = Promise.resolve();
   const saveSettings = () => { settingsSave = settingsSave.catch(() => {}).then(() => saveJson(settingsPath, settings)); return settingsSave; };
@@ -97,6 +103,11 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const show = (window, extra = {}) => { native({ type: 'window', action: 'show', window }); broadcast('navigate', { window, ...extra }); };
   const focus = id => { sessions.get(id); selectedId = id; settings.selectedId = id; scheduleSettings(); show('chats', { sessionId: id }); return { selectedId: id }; };
   const registry = async () => readJson(path.join(repo, 'workspace', 'workspace.json'), { entities: [] });
+  let galleryLoad;
+  const loadGallery = () => galleryLoad ??= registry().then(({ entities }) => projectGallery({
+    repo, entities: Array.isArray(entities) ? entities.filter(item => item && typeof item === 'object') : [],
+    sessions: sessions.list(), pinned: settings.pinnedProjects || [], files,
+  })).finally(() => { galleryLoad = undefined; });
   const workspace = new Workspace(repo, () => broadcast('workspace-changed', {}));
   const cards = new CardDocuments(workspace);
   const history = query => sessions.list().filter(item => !query || `${item.name} ${item.agent} ${item.cwd} ${item.preview || ''}`.normalize('NFC').toLowerCase().includes(query.normalize('NFC').toLowerCase())).sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -119,8 +130,8 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       const latestRequest = requestText || coordinator.operations.get(operationId)?.text || '';
       if (['reopen_chat', 'send_to_chat', 'attach_files'].includes(name)) {
         const target = sessions.get(args.id);
-        if (target.agent === 'shell') throw new Error('Use the local shell directly. Mr. Mak can send tasks only to agent chats.');
-        if (target.bypass && settings.defaultBypass !== true) throw new Error('This chat uses bypass permissions. Send the task directly, or enable bypass yourself in Settings before using Mr. Mak to control it.');
+        if (target.agent === 'shell') throw new Error('Use the local shell directly. Bento Workspace can send tasks only to agent chats.');
+        if (target.bypass && settings.defaultBypass !== true) throw new Error('This chat uses bypass permissions. Send the task directly, or enable bypass yourself in Settings before using Bento Workspace to control it.');
       }
       switch (name) {
         case 'list_chats': return sessions.active();
@@ -131,7 +142,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         case 'pin_chat': return sessions.pin(args.id, args.pinned);
         case 'open_chat': {
           args = openChatArguments(args);
-          if (args.bypass === true && settings.defaultBypass !== true) throw new Error('To enable bypass, choose it yourself in New chat or Settings. Mr. Mak cannot raise the selected permission level.');
+          if (args.bypass === true && settings.defaultBypass !== true) throw new Error('To enable bypass, choose it yourself in New chat or Settings. Bento Workspace cannot raise the selected permission level.');
           const session = await sessions.create({ agent: args.agent, cwd: args.cwd, name: taskTitle(args.name), effort: taskEffort(latestRequest, args.effort), bypass: args.bypass === false ? false : settings.defaultBypass === true });
           focus(session.id); return session;
         }
@@ -148,7 +159,6 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         case 'show_workspace': {
           if (args.entityId && !(await registry()).entities.some(item => item.id === args.entityId)) throw new Error('Workspace report does not exist');
           workspaceRoute = args.entityId ? `#/${encodeURIComponent(args.entityId)}${Number.isInteger(args.step) ? '/' + args.step : ''}` : null;
-          settings.workspaceRoute = workspaceRoute; scheduleSettings();
           show('workspace', { route: workspaceRoute }); return { shown: true, route: workspaceRoute };
         }
         case 'preview_file': { const preview = await files.preview(args.path); show('workspace', { preview }); return { shown: preview.path }; }
@@ -201,7 +211,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   function authorize(request) {
     if (request.headers.host !== new URL(origin).host) throw Object.assign(new Error('Unexpected host'), { status: 403 });
     if (request.headers.origin && request.headers.origin !== origin) throw Object.assign(new Error('Unexpected origin'), { status: 403 });
-    if (!equalSecret(request.headers.authorization, `Bearer ${token}`)) throw Object.assign(new Error('Open Mr. Mak from its desktop launcher'), { status: 401 });
+    if (!equalSecret(request.headers.authorization, `Bearer ${token}`)) throw Object.assign(new Error('Open Bento Workspace from its desktop launcher'), { status: 401 });
   }
   const server = http.createServer(async (request, response) => {
     try {
@@ -240,11 +250,17 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         if (method === 'POST' && url.pathname === '/api/mobile/pair') return json(response, 200, await mobile.newPairing());
         if (method === 'POST' && url.pathname === '/api/mobile/approve') return json(response, 200, await mobile.approve(data.id));
         if (method === 'POST' && url.pathname === '/api/mobile/revoke') return json(response, 200, await mobile.revoke(data.id));
+        if (method === 'GET' && url.pathname === '/api/network') return json(response, 200, { ...network.dashboard(), mobileEnabled: mobile.active });
+        if (method === 'POST' && url.pathname === '/api/network/invite') return json(response, 200, await network.invite());
+        if (method === 'POST' && url.pathname === '/api/network/join') return json(response, 200, await network.join(data.invitation));
+        if (method === 'POST' && url.pathname === '/api/network/revoke') return json(response, 200, await network.remove(data.id));
+        if (method === 'POST' && url.pathname === '/api/network/disconnect') return json(response, 200, await network.disconnect());
         if (method === 'GET' && url.pathname === '/api/bootstrap') {
           const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
           return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-30) });
         }
         if (method === 'GET' && url.pathname === '/api/workspace') return json(response, 200, await registry());
+        if (method === 'GET' && url.pathname === '/api/workspace/projects') return json(response, 200, await loadGallery());
         if (method === 'POST' && url.pathname === '/api/workspace/cards') return json(response, 201, await cards.create(data));
         const cardDocument = /^\/api\/workspace\/cards\/([^/]+)\/(\d+)$/.exec(url.pathname);
         if (cardDocument && method === 'GET') return json(response, 200, await cards.read(decodeURIComponent(cardDocument[1]), Number(cardDocument[2])));
@@ -375,7 +391,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           if (method === 'GET' && action === 'messages') {
             const session = sessions.get(id);
             const value = await conversationMedia.present(await transcripts.read(session), session, 'desktop', grant => `/media/${session.id}/${grant}`);
-            // Mr. Mak answers Claude Code's cache warning itself while it applies a footer model change.
+            // Bento Workspace answers Claude Code's cache warning itself while it applies a footer model change.
             return json(response, 200, { ...value, prompt: session.process && !switchingModel(id) ? await readPrompt(sessions, id) : null });
           }
           if (method === 'GET' && action === 'commands') { const session = sessions.get(id); return json(response, 200, await chatCommands(session.agent, session.cwd, mcpOptions)); }
@@ -465,11 +481,12 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
         'Content-Security-Policy': `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: ${files.origin}; media-src 'self' blob: ${files.origin}; connect-src 'self' ws://127.0.0.1:* ${files.origin}; frame-src http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`,
       });
-    } catch (error) { if (!response.headersSent) json(response, error.status || 400, { error: publicError(error) }); }
+    } catch (error) { if (!response.headersSent) json(response, error.status || 400, { error: publicError(error), ...(error.code === tailscaleHttpsRequired ? { code: error.code } : {}) }); }
   });
   const origin = await listen(server);
   files.uiOrigin = origin;
-  mobile = await new MobileGateway({ ...mobileOptions, transcripts, readAloud, dictation, chooseDictation, repo, uiDir, stateDir, sessions, attachments, closeChat, settings: () => settings, changed: state => broadcast('mobile-state', { mobile: state }) }).init();
+  const network = await new DeviceNetwork({ stateDir: networkStateDir || stateDir, sessions, relay: mobileOptions?.networkRelay, getOrigin: () => mobile?.active ? mobile.origin : '' }).init();
+  mobile = await new MobileGateway({ ...mobileOptions, network, transcripts, readAloud, dictation, chooseDictation, repo, uiDir, stateDir, sessions, attachments, closeChat, settings: () => settings, changed: state => broadcast('mobile-state', { mobile: state }) }).init();
   const wss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024 });
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, origin);
@@ -495,7 +512,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         else if (message.type === 'resize') sessions.resize(message.id, message.cols, message.rows);
         else if (message.type === 'selected') { sessions.get(message.id); selectedId = message.id; settings.selectedId = selectedId; scheduleSettings(); }
         else if (message.type === 'seen' && ws.surface === 'chats' && ws.sessionId === message.id && selectedId === message.id) sessions.seen(message.id, message.completionVersion);
-        else if (message.type === 'workspace-route') { workspaceRoute = String(message.route || '').slice(0, 500); settings.workspaceRoute = workspaceRoute; scheduleSettings(); }
+        else if (message.type === 'workspace-route') workspaceRoute = String(message.route || '').slice(0, 500) || null;
         else if (message.type === 'ping') send(ws, 'pong', {});
       } catch (error) { send(ws, 'service-error', { error: publicError(error) }); }
     });
@@ -512,7 +529,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       async close() {
         if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
       watcher?.close(); clearTimeout(restoreTimer); coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
-      dictation.close(); await mobile.close();
+      dictation.close(); await network.close(); await mobile.close();
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();
       server.closeAllConnections(); contentServer.closeAllConnections();

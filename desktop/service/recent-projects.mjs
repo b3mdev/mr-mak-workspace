@@ -1,12 +1,13 @@
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readJson } from './util.mjs';
-import { codexProjects } from './codex-history.mjs';
+import { readJson, within } from './util.mjs';
+import { codexProjectIndex, codexProjects } from './codex-history.mjs';
 
 const MAX_PROJECTS = 60;
 
-export const projectKey = folder => process.platform === 'win32' ? path.resolve(folder).toLowerCase() : path.resolve(folder);
+const regularPath = folder => process.platform === 'win32' ? folder.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '') : folder;
+export const projectKey = folder => process.platform === 'win32' ? path.resolve(regularPath(folder)).toLowerCase() : path.resolve(folder);
 
 // The CLIs also record git worktrees, desktop-app scratch folders and the Codex
 // app's dated folders. They are short-lived, not places to start a new chat.
@@ -28,28 +29,46 @@ async function claudeProjects() {
   }));
 }
 
-export async function recentProjects({ repo, sessions = [], pinned = [] }) {
+export async function recentProjects({ repo, sessions = [], pinned = [], catalog = false, entities = [] }) {
   // The first spelling of a folder is shown. The CLIs record their own working
   // directory, so they come before folders typed into New chat.
-  const [claude, codex] = await Promise.all([claudeProjects(), codexProjects().catch(() => [])]);
+  const specRoot = path.join(repo, 'projects');
+  const [claude, codex, local] = await Promise.all([
+    claudeProjects(),
+    (catalog ? codexProjectIndex() : codexProjects()).catch(() => []),
+    catalog ? readdir(specRoot, { withFileTypes: true }).catch(() => []) : [],
+  ]);
   const candidates = [
     { path: repo, source: 'workspace', at: null },
     ...claude, ...codex,
-    ...sessions.map(item => ({ path: item.cwd, source: 'mrmak', at: item.updatedAt || item.createdAt || null })),
+    ...sessions.flatMap(item => {
+      const at = item.updatedAt || item.createdAt || null;
+      const edge = { path: item.cwd, source: 'mrmak', at };
+      return catalog && ['codex', 'claude'].includes(item.agent) ? [edge, { ...edge, source: item.agent }] : [edge];
+    }),
     ...pinned.map(folder => ({ path: folder, source: 'pinned', at: null })),
+    ...local.filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && !entities.some(entity => entity.id === entry.name))
+      .map(entry => ({ path: path.join(specRoot, entry.name), source: 'workspace', at: null })),
   ];
+  const registered = new Set(entities.filter(entity => typeof entity.folder === 'string').map(entity => projectKey(path.join(repo, 'workspace', entity.folder))));
+  const repoKey = projectKey(repo), homeKey = projectKey(os.homedir());
   const projects = new Map();
   for (const item of candidates) {
-    if (typeof item.path !== 'string' || !path.isAbsolute(item.path) || /[\x00-\x1f]/.test(item.path) || transient(item.path)) continue;
-    const key = projectKey(item.path);
-    const project = projects.get(key) || { path: path.resolve(item.path), name: path.basename(path.resolve(item.path)) || path.resolve(item.path), sources: [], pinned: false, lastUsedAt: null };
+    if (typeof item.path !== 'string' || /[\x00-\x1f]/.test(item.path)) continue;
+    const folder = regularPath(item.path);
+    if (!path.isAbsolute(folder) || transient(folder)) continue;
+    const resolved = path.resolve(folder), key = projectKey(folder);
+    if (catalog && registered.has(key)) continue;
+    if (catalog && key !== repoKey && (resolved === path.parse(resolved).root || key === homeKey || within(os.tmpdir(), resolved))) continue;
+    const project = projects.get(key) || { path: resolved, name: path.basename(resolved) || resolved, sources: [], pinned: false, lastUsedAt: null };
     if (item.source === 'pinned') project.pinned = true;
     else if (!project.sources.includes(item.source)) project.sources.push(item.source);
-    if (item.at && (!project.lastUsedAt || item.at > project.lastUsedAt)) project.lastUsedAt = item.at;
+    if (typeof item.at === 'string' && Number.isFinite(Date.parse(item.at)) && (!project.lastUsedAt || item.at > project.lastUsedAt)) project.lastUsedAt = item.at;
     projects.set(key, project);
   }
   const existing = await Promise.all([...projects.values()].map(async item => (await stat(item.path).catch(() => null))?.isDirectory() ? item : null));
   // The Workspace stays first: it was the only default before this list existed.
   // Pinned favorites follow, then the most recently used folders.
-  return existing.filter(Boolean).sort((a, b) => Number(b.sources.includes('workspace')) - Number(a.sources.includes('workspace')) || Number(b.pinned) - Number(a.pinned) || String(b.lastUsedAt || '').localeCompare(String(a.lastUsedAt || '')) || a.name.localeCompare(b.name)).slice(0, MAX_PROJECTS);
+  const sorted = existing.filter(Boolean).sort((a, b) => Number(projectKey(b.path) === repoKey) - Number(projectKey(a.path) === repoKey) || Number(b.pinned) - Number(a.pinned) || String(b.lastUsedAt || '').localeCompare(String(a.lastUsedAt || '')) || a.name.localeCompare(b.name));
+  return catalog ? sorted : sorted.slice(0, MAX_PROJECTS);
 }

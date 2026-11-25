@@ -22,6 +22,7 @@ const secretPart = value => value.startsWith('.') || /^(node_modules|target|oaut
 const SCOPED_GRANT_MS = 12 * 60 * 60 * 1000;
 const sharedReportFile = relative => /^workspace\/_shared\/(report\.(css|js)|examples\.css)$/.test(relative);
 const encodePath = relative => relative.split('/').map(encodeURIComponent).join('/');
+export const isCoverImage = file => /\.(png|jpe?g|webp|gif)$/i.test(file);
 
 export async function serveFile(request, response, file, info, headers = {}) {
   const contentType = mime[path.extname(file).toLowerCase()] || 'application/octet-stream';
@@ -45,19 +46,27 @@ export async function serveFile(request, response, file, info, headers = {}) {
 
 export class Files {
   constructor(repo) { this.repo = repo; this.grants = new Map(); this.scoped = new Map(); this.sites = new Map(); this.repoGrant = this.grant(repo); this.writes = Promise.resolve(); }
-  scopedGrant(root, relative) {
+  scopedGrant(root, relative, image = false) {
     const folder = relative.split('/').slice(0, -1);
     // A report can use its own card and the shared chrome, never the whole repository.
-    const prefix = root === this.repo && folder[0] === 'workspace' && folder.length > 1 ? `workspace/${folder[1]}/`
+    const prefix = image ? relative : root === this.repo && folder[0] === 'workspace' && folder.length > 1 ? `workspace/${folder[1]}/`
       : root === this.repo && (!folder.length || folder.join('/') === 'workspace') ? relative
       : folder.length ? folder.join('/') + '/' : '';
     const now = Date.now();
+    const peers = [];
     for (const [token, grant] of this.scoped) {
       if (grant.expires < now) this.dropScoped(token);
-      else if (grant.root === root && grant.prefix === prefix) { grant.expires = now + SCOPED_GRANT_MS; return token; }
+      else if (grant.image === image) {
+        if (grant.root === root && grant.prefix === prefix) { grant.expires = now + SCOPED_GRANT_MS; return token; }
+        peers.push(token);
+      }
     }
-    if (this.scoped.size >= 200) this.dropScoped(this.scoped.keys().next().value);
-    const token = secret(); this.scoped.set(token, { root, prefix, expires: now + SCOPED_GRANT_MS }); return token;
+    if (peers.length >= (image ? 2000 : 200)) this.dropScoped(peers[0]);
+    const token = secret(); this.scoped.set(token, { root, prefix, image, expires: now + SCOPED_GRANT_MS }); return token;
+  }
+  coverUrl(file) {
+    const name = path.basename(file);
+    return `${this.origin}/view/${this.scopedGrant(path.dirname(file), name, true)}/${encodeURIComponent(name)}`;
   }
   // Each report folder is served from its own local port. Its pages share one origin, so a
   // multi-page report can frame and read its own pages, while other reports, the UI and the
@@ -168,6 +177,7 @@ export class Files {
     if (!match || !(scoped || (!siteToken && this.grants.has(match[1])))) throw Object.assign(new Error('Preview not found'), { status: 404 });
     const relative = decodeURIComponent(match[2]).replaceAll('\\', '/');
     if (relative.split('/').some(secretPart)) throw Object.assign(new Error('Private application files cannot be loaded by reports'), { status: 403 });
+    if (scoped?.image && relative !== scoped.prefix) throw Object.assign(new Error('Cover not found'), { status: 404 });
     const root = scoped ? scoped.root : this.grants.get(match[1]);
     let fileRoot = root, filePath = relative;
     if (scoped) {
@@ -183,6 +193,7 @@ export class Files {
     // Resolve links against the allowed folder, not the repository root.
     const { file, info } = await realFile(fileRoot, filePath);
     if (!info.isFile()) throw Object.assign(new Error('File not found'), { status: 404 });
+    if (scoped?.image && (!isCoverImage(file) || path.basename(file) !== relative || info.size > 8 * 1024 * 1024)) throw Object.assign(new Error('Cover not found'), { status: 404 });
     const headers = { 'Referrer-Policy': 'no-referrer', 'Access-Control-Allow-Origin': this.uiOrigin, 'Cross-Origin-Resource-Policy': 'cross-origin' };
     const document = /\.(html?|svg)$/i.test(file), html = /\.html?$/i.test(file);
     // HTML runs on its folder's port. SVG stays an opaque document on the shared port, so <img> keeps working in the UI.

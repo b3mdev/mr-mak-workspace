@@ -25,7 +25,7 @@ try {
   $taskCodex = Get-Command codex -ErrorAction SilentlyContinue
   $taskClaude = Get-Command claude -ErrorAction SilentlyContinue
   $taskOpenCode = Get-Command opencode -ErrorAction SilentlyContinue
-  Write-Host 'Mr. Mak Workspace setup'
+  Write-Host 'Bento Workspace setup'
   Write-Host ('Node: ' + [bool]$taskNode + ' | npm: ' + [bool]$taskNpm + ' | Rust (desktop source build only): ' + [bool]$taskCargo)
   Write-Host ('Codex CLI: ' + [bool]$taskCodex + ' | Claude Code CLI: ' + [bool]$taskClaude + ' | OpenCode: ' + [bool]$taskOpenCode)
   if (-not $taskCodex -and -not $taskClaude -and -not $taskOpenCode) {
@@ -53,7 +53,7 @@ try {
     $taskBundle = Join-Path $taskRoot 'src-tauri/target/release/bundle/nsis'
     if ($Mode -eq 'Desktop') {
       Write-Host ('Installer ready in ' + $taskBundle)
-      Write-Host 'Run the installer, then double-click Start Mr. Mak.cmd.'
+      Write-Host 'Run the installer, then double-click Start Bento Workspace.cmd.'
       exit 0
     }
     $taskVersion = (Get-Content -LiteralPath (Join-Path $taskRoot 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json).version
@@ -74,16 +74,16 @@ try {
       return @(Get-MakUpdateProcesses @(Get-CimInstance Win32_Process -ErrorAction Stop) $taskInstallDirectories).Count -gt 0
     }
     if (& $taskRunning) {
-      Write-Host 'Finish active agent tasks, then choose Quit from the Mr. Mak tray menu. Setup continues by itself.'
+      Write-Host 'Finish active agent tasks, then choose Quit from the Bento Workspace tray menu. Setup continues by itself.'
       while (& $taskRunning) { Start-Sleep -Seconds 2 }
     }
     Write-Host ('Installing ' + $taskSetup.Name)
     # NSIS requires /D to be last and unquoted, including paths with spaces.
     $taskInstaller = Start-Process -FilePath $taskSetup.FullName -ArgumentList @('/S', ('/D=' + $InstallDirectory)) -WindowStyle Hidden -Wait -PassThru
     if ($taskInstaller.ExitCode -ne 0) { throw ('The installer stopped with code ' + $taskInstaller.ExitCode + '. Run it from ' + $taskBundle + ' to see its message.') }
-    Write-Host 'Installed. Starting Mr. Mak.'
+    Write-Host 'Installed. Starting Bento Workspace.'
     $taskApp = Join-Path $InstallDirectory 'mrmak-workspace.exe'
     if (-not (Test-Path -LiteralPath $taskApp)) { throw ('The installed app was not found in ' + $InstallDirectory + '. Open the installer to inspect its destination.') }
-    Start-Process -FilePath $taskApp -ArgumentList @('--repo', ('"' + $taskRoot + '"')) -WorkingDirectory $taskRoot -WindowStyle Hidden
+    Start-Process -FilePath $taskApp -ArgumentList @('--repo', ('"' + $taskRoot + '"'), '--show', 'workspace') -WorkingDirectory $taskRoot -WindowStyle Hidden
   }
 } finally { Pop-Location }

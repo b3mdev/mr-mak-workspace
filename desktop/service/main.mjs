@@ -1,4 +1,6 @@
 import path from 'node:path';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createService } from './server.mjs';
 import { saveJson } from './util.mjs';
@@ -10,8 +12,14 @@ const option = name => { const index = args.indexOf(name); return index < 0 ? nu
 const repo = path.resolve(option('--repo') || process.env.MRMAK_REPO || path.join(directory, '../..'));
 const uiDir = path.resolve(option('--ui') || path.join(directory, '../../dist'));
 const stateDir = path.resolve(option('--state') || path.join(repo, '.mrmak'));
+// Computer credentials need a machine-local home even when a Workspace is synced.
+const localData = process.platform === 'win32' ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+  : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support')
+  : process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+const workspaceKey = createHash('sha256').update(process.platform === 'win32' ? repo.toLowerCase() : repo).digest('hex').slice(0, 24);
+const networkStateDir = option('--state') ? stateDir : path.join(localData, 'com.mrmak.workspace', 'network', workspaceKey);
 const writeNative = value => process.stdout.write(JSON.stringify(value) + '\n');
-const service = await createService({ repo, uiDir, stateDir, native: writeNative, restoreSessions: true });
+const service = await createService({ repo, uiDir, stateDir, networkStateDir, native: writeNative, restoreSessions: true });
 // Diagnostics are readable project state. Window credentials travel only over
 // the private startup pipe to the desktop shell, never through this file.
 await saveJson(path.join(stateDir, 'runtime.json'), { pid: process.pid, origin: service.origin });

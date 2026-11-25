@@ -19,7 +19,7 @@ mod win_key;
 #[cfg(target_os = "macos")]
 mod mac_key;
 
-// The "recall Mr. Mak" shortcut: a bare Win-key tap on Windows, ⌃⌥⌘Space on macOS.
+// The "recall Bento Workspace" shortcut: a bare Win-key tap on Windows, ⌃⌥⌘Space on macOS.
 #[cfg(windows)]
 type RecallShortcut = win_key::WinKeyShortcut;
 #[cfg(target_os = "macos")]
@@ -156,7 +156,7 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
                 return Ok(root.to_owned());
             }
         }
-        selected = rfd::FileDialog::new().set_title("Choose your Mr. Mak Workspace repository").pick_folder();
+        selected = rfd::FileDialog::new().set_title("Choose your Bento Workspace repository").pick_folder();
         if selected.is_none() { return Err(Cancelled.into()); }
         if !selected.as_ref().unwrap().join("workspace/workspace.json").is_file() {
             rfd::MessageDialog::new().set_title("Choose the Workspace folder").set_description("Select the repository folder containing workspace/workspace.json.").show();
@@ -221,14 +221,14 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
         .initialization_script(&auth_script)
         .on_new_window(|url, _| external_links::open_popup(url))
         .disable_drag_drop_handler().visible(false)
-        .title(format!("{} — Workspace", app.config().product_name.as_deref().unwrap_or("Mr. Mak"))).inner_size((width - chat_width - 8.0).max(500.0), (height - 6.0).max(450.0))
+        .title(app.config().product_name.as_deref().unwrap_or("Bento Workspace")).inner_size((width - chat_width - 8.0).max(500.0), (height - 6.0).max(450.0))
         .position(x + chat_width + 6.0, y + 2.0).min_inner_size(500.0, 400.0)
         .build()?;
     let chats_window = window_defaults(WebviewWindowBuilder::new(app, "chats", WebviewUrl::External(chats.parse()?)))
         .initialization_script(&auth_script)
         .on_new_window(|url, _| external_links::open_popup(url))
         .visible(false)
-        .title(format!("{} — Chats", app.config().product_name.as_deref().unwrap_or("Mr. Mak"))).inner_size(chat_width, (height - 6.0).max(450.0))
+        .title(format!("{} — Chats", app.config().product_name.as_deref().unwrap_or("Bento Workspace"))).inner_size(chat_width, (height - 6.0).max(450.0))
         .position(x + 2.0, y + 2.0).min_inner_size(330.0, 420.0)
         .build()?;
     // Native drops expose every original file/folder path. Keep Workspace's
@@ -369,7 +369,7 @@ fn guarded_setup(app: &mut tauri::App, setup: impl FnOnce(&mut tauri::App) -> Re
     if !cfg!(target_os = "macos") { return Err(error); }
     let cancelled = error.downcast_ref::<Cancelled>().is_some();
     if !cancelled {
-        rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title("Mr. Mak could not start").set_description(error.to_string()).show();
+        rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title("Bento Workspace could not start").set_description(error.to_string()).show();
     }
     app.handle().exit(if cancelled { 0 } else { 1 });
     Ok(())
@@ -433,7 +433,7 @@ fn main() {
                             let chats = event["chats"].as_str().unwrap_or("").to_owned();
                             let _ = app_handle.run_on_main_thread(move || {
                                 if let Err(error) = make_windows(&handle, &workspace, &chats) {
-                                    rfd::MessageDialog::new().set_title("Mr. Mak could not open").set_description(error.to_string()).show(); handle.exit(1);
+                                    rfd::MessageDialog::new().set_title("Bento Workspace could not open").set_description(error.to_string()).show(); handle.exit(1);
                                 }
                             });
                         },
@@ -485,7 +485,7 @@ fn main() {
                     }
                 }
                 if app_handle.get_webview_window("workspace").is_none() {
-                    rfd::MessageDialog::new().set_title("Mr. Mak service did not start").set_description(format!("The local service stopped before opening the windows. See {} for details.", service_log.display())).show();
+                    rfd::MessageDialog::new().set_title("Bento Workspace service did not start").set_description(format!("The local service stopped before opening the windows. See {} for details.", service_log.display())).show();
                     app_handle.exit(1);
                 }
             });
@@ -494,7 +494,7 @@ fn main() {
             let workspace_item = MenuItem::with_id(app, "workspace", "Show Workspace", true, None::<&str>)?;
             let chats_item = MenuItem::with_id(app, "chats", "Show Chats", true, None::<&str>)?;
             let both_item = MenuItem::with_id(app, "both", "Show both windows", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Mr. Mak and stop terminals", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Bento Workspace and stop terminals", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&workspace_item, &chats_item, &both_item, &separator, &quit_item])?;
             #[cfg(any(windows, target_os = "macos"))]
@@ -504,7 +504,7 @@ fn main() {
                 let shortcut = RecallShortcut::start(app.handle(), enabled);
                 let available = shortcut.is_ok();
                 if let Ok(shortcut) = shortcut { app.manage(shortcut); }
-                let item = CheckMenuItem::with_id(app, "win-key", format!("{RECALL_LABEL} shows Mr. Mak"), available, enabled && available, None::<&str>)?;
+                let item = CheckMenuItem::with_id(app, "win-key", format!("{RECALL_LABEL} shows Bento Workspace"), available, enabled && available, None::<&str>)?;
                 menu.insert(&item, 3)?;
                 app.manage(item);
                 publish_shortcut(app.handle(), None, if available { None } else { Some(format!("The system could not register {RECALL_LABEL}.")) });
@@ -513,7 +513,7 @@ fn main() {
             let tray = TrayIconBuilder::new().icon(menu_bar_icon()?).icon_as_template(true);
             #[cfg(not(target_os = "macos"))]
             let tray = TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone());
-            tray.tooltip("Mr. Mak — your agents, close at hand")
+            tray.tooltip("Bento Workspace — your agents, close at hand")
                 .menu(&menu).show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "workspace" => reveal(app, "workspace"), "chats" => reveal(app, "chats"),
@@ -548,7 +548,7 @@ fn main() {
                 if let Some(job) = app.try_state::<ServiceJob>() { job.0.lock().unwrap().take(); }
             }
         }),
-        Err(error) => { rfd::MessageDialog::new().set_title("Mr. Mak could not start").set_description(error.to_string()).show(); }
+        Err(error) => { rfd::MessageDialog::new().set_title("Bento Workspace could not start").set_description(error.to_string()).show(); }
     }
 }
 

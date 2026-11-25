@@ -3,23 +3,30 @@ import App from '../App'
 import { dismissError, sendEvent, startDesktop, surface, useDesktop } from './client'
 import FilesRail, { FilePreview } from './FilesRail'
 import VoiceDock from './VoiceDock'
-import { Icon, Nose } from './Icons'
+import { Icon } from './Icons'
+import MakLogo from '../components/MakLogo'
 import './desktop.css'
 
 const Chats = lazy(() => import('./Chats'))
 
 export default function DesktopApp() {
   const state = useDesktop()
-  useEffect(() => { startDesktop() }, [])
   useEffect(() => {
-    if (surface !== 'workspace') return
+    startDesktop()
+    if (surface === 'chats') {
+      document.querySelector('link[rel="icon"]')?.setAttribute('href', '/assets/bento-chats-32.png')
+    }
+  }, [])
+  useEffect(() => {
+    if (surface !== 'workspace' || !state.connected) return
     const route = () => sendEvent({ type: 'workspace-route', route: location.hash })
+    route()
     window.addEventListener('hashchange', route)
     return () => window.removeEventListener('hashchange', route)
-  }, [])
-  if (!state.ready) return <div className="desktop-boot"><Nose size={70} /><h1>Mr. Mak</h1><p>{state.error || 'Opening your workspace…'}</p>{state.error && <button className="desk-secondary" onClick={() => startDesktop()}>Reconnect</button>}</div>
+  }, [state.connected])
+  if (!state.ready) return <div className="desktop-boot"><MakLogo size={70} variant={surface} /><h1>Bento Workspace</h1><p>{state.error || 'Opening your workspace…'}</p>{state.error && <button className="desk-secondary" onClick={() => startDesktop()}>Reconnect</button>}</div>
   return <div className={`desktop-root ${surface}-root`}>
-    {surface === 'chats' ? <Suspense fallback={<div className="desktop-boot"><Nose size={50} /></div>}><Chats /></Suspense> : <><div className="workspace-surface"><App />{state.preview && <FilePreview file={state.preview} />}</div><FilesRail /></>}
+    {surface === 'chats' ? <Suspense fallback={<div className="desktop-boot"><MakLogo size={50} variant="chats" /></div>}><Chats /></Suspense> : <><div className="workspace-surface"><App />{state.preview && <FilePreview file={state.preview} />}</div><FilesRail /></>}
     {state.error && <div className="desktop-error" role="alert"><span>{state.error}</span><button onClick={dismissError} aria-label="Dismiss error"><Icon name="close" size={16} /></button></div>}
     {!state.connected && <div className="desktop-offline">Reconnecting to the local service…</div>}
     <VoiceDock />

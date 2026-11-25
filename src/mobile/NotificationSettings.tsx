@@ -4,7 +4,7 @@ import { mobileApi, muteMobileChat, useMobile } from './client'
 
 interface PushStatus { publicKey: string; enabled: boolean }
 
-// The push service takes the key as raw bytes; Mr. Mak sends it as base64url.
+// The push service takes the key as raw bytes; Bento Workspace sends it as base64url.
 const keyBytes = (key: string) => Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(key.length / 4) * 4, '=')), char => char.charCodeAt(0))
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 
@@ -33,7 +33,7 @@ export default function NotificationSettings({ disabled }: { disabled: boolean }
         const value = await mobileApi<PushStatus>('/push', { subscription: null })
         setInfo({ publicKey: value.publicKey, enabled: value.enabled })
       } else {
-        if (await Notification.requestPermission() !== 'granted') { setError('Allow notifications for Mr. Mak in this browser’s settings, then try again.'); return }
+        if (await Notification.requestPermission() !== 'granted') { setError('Allow notifications for Bento Workspace in this browser’s settings, then try again.'); return }
         const subscription = current || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(info.publicKey) })
         const value = await mobileApi<PushStatus>('/push', { subscription: subscription.toJSON() })
         setInfo({ publicKey: value.publicKey, enabled: value.enabled })
@@ -42,7 +42,7 @@ export default function NotificationSettings({ disabled }: { disabled: boolean }
     finally { setBusy(false) }
   }
   return <fieldset className="mobile-reading-settings"><legend>Notifications</legend>
-    {!supported() ? <p>On iPhone, add Mr. Mak to your Home Screen and open it from there to turn on notifications.</p>
+    {!supported() ? <p>On iPhone, add Bento Workspace to your Home Screen and open it from there to turn on notifications.</p>
       : <><p>{info?.enabled ? 'This phone is notified when a chat is waiting for you, unless that chat is open on a phone screen or muted with its bell.' : 'Get a notification when a chat is waiting for you.'}</p><button onClick={() => void toggle()} disabled={disabled || busy || !info}>{info?.enabled ? 'Turn off notifications' : 'Turn on notifications'}</button></>}
     {error && <p role="alert">{error}</p>}
   </fieldset>

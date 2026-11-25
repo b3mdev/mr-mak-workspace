@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.7 - 2026-11-25
+
+- Rename the app to Bento Workspace and use separate bem-te-vi icons for Workspace and Chats.
+- Open the project Home by default. Browse projects in cards or a list, filter by Bento, Codex or Claude Code, and preview results with covers selected from the project folders.
+- Open a project to see its Bento Chat conversations. Select an active conversation to switch to its tab or reopen a saved conversation from History.
+- Manage connected computers from **Rede** in the Workspace sidebar. Join the same private Tailscale network to see task status from several computers on desktop or on a paired phone. HTTPS setup diagnostics show the active Tailscale network.
+
 ## 0.6.6 - 2026-11-20
 
 - Simplify New chat: the name field comes first, one agent dropdown replaces the six tiles, the permission choice stays visible, and project, folder, group, effort and resume are under **More options**, whose folded row shows the current folder, group and effort.
