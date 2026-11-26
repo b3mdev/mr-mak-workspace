@@ -429,6 +429,7 @@ export class Sessions extends EventEmitter {
 
   input(id, data, { coordinator = false, submit = false } = {}) {
     const session = this.get(id);
+    if (session.transferring) throw new Error('This conversation is moving to another application.');
     if (!session.process) throw new Error('This terminal is stopped. Resume it before sending a message.');
     if (coordinator && session.agent === 'shell') throw new Error('Bento Workspace can send messages to agent chats; type shell commands directly in the local shell.');
     if (typeof data !== 'string' || data.length > 64000) throw new Error('Message is too large');
@@ -710,6 +711,7 @@ export class Sessions extends EventEmitter {
     nativeConversationId(nativeId);
     if (this.closed) throw new Error('Bento Workspace is shutting down');
     const session = this.get(id);
+    if (session.transferring) throw new Error('This conversation is moving to another application.');
     if (session.stopping) await session.stopping;
     if (session.process) return publicSession(session);
     if (!session.open && this.active().length >= 80) throw new Error('Close a tab before opening another.');

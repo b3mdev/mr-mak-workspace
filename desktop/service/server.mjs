@@ -27,6 +27,7 @@ import { MobileDictation } from './mobile-dictation.mjs';
 import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
+import { releaseConversation } from './conversation-transfer.mjs';
 import { projectKey, recentProjects } from './recent-projects.mjs';
 import { projectGallery } from './project-gallery.mjs';
 import { DeviceNetwork } from './device-network.mjs';
@@ -440,6 +441,17 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
             // Bento Workspace answers Claude Code's cache warning itself while it applies a footer model change.
             return json(response, 200, { ...value, prompt: session.process && !switchingModel(id) ? await readPrompt(sessions, id) : null });
           }
+          if (method === 'GET' && action === 'earlier') {
+            const session = sessions.get(id), before = url.searchParams.get('before');
+            if (before && before.length > 256) throw Object.assign(new Error('Choose a message to read earlier history.'), { status: 400 });
+            const value = await transcripts.older(session, before);
+            return json(response, 200, await conversationMedia.present(value, session, 'desktop', grant => `/media/${session.id}/${grant}`));
+          }
+          if (method === 'GET' && action === 'export') {
+            const history = await transcripts.fullHistory(sessions.get(id));
+            if (!history) throw Object.assign(new Error('This conversation has no readable local history.'), { status: 404 });
+            return json(response, 200, { messages: history.messages.filter(message => message.role !== 'system' && message.text.trim()).map(({ role, text }) => ({ role, text })) });
+          }
           if (method === 'GET' && action === 'commands') { const session = sessions.get(id); return json(response, 200, await chatCommands(session.agent, session.cwd, mcpOptions)); }
           if (method === 'GET' && action === 'stats') {
             const session = sessions.get(id);
@@ -467,6 +479,10 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
             return json(response, 200, sessions.input(id, `${text}${paths.length ? `${text ? '\n' : ''}${attachmentText(paths, session.agent)}` : ''}`, { coordinator: true, submit: true }));
           }
           if (method === 'POST' && action === 'focus') return json(response, 200, focus(id));
+          if (method === 'POST' && action === 'transfer') {
+            const session = sessions.get(id);
+            return json(response, 200, await releaseConversation(session, () => closeChat(id)));
+          }
           if (method === 'POST' && action === 'stop') return json(response, 200, sessions.stop(id));
           if (method === 'POST' && action === 'resume') { const session = await sessions.resume(id, data.nativeId); focus(id); return json(response, 200, session); }
           if (method === 'POST' && action === 'attach') return json(response, 200, await attach(id, data.paths));
@@ -475,6 +491,12 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
           if (method === 'POST' && action === 'input') return json(response, 200, sessions.input(id, data.text, { coordinator: data.paste !== false, submit: data.submit !== false }));
           if (method === 'PATCH' && !action) return json(response, 200, typeof data.pinned === 'boolean' ? sessions.pin(id, data.pinned) : typeof data.unread === 'boolean' ? sessions.mark(id, data.unread) : 'handoffSnooze' in data ? sessions.snoozeHandoff(id, data.handoffSnooze) : 'tabColor' in data ? sessions.color(id, data.tabColor) : 'group' in data ? await sessions.assign(id, data.group) : sessions.rename(id, data.name));
           if (method === 'DELETE' && !action) return json(response, 200, await closeChat(id));
+        }
+        if (method === 'POST' && url.pathname === '/api/browseros/split') {
+          if (process.platform !== 'win32') throw Object.assign(new Error('Side-by-side BrowserOS neo is available on Windows.'), { status: 501 });
+          if (typeof data.requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(data.requestId)) throw new Error('Invalid BrowserOS window request.');
+          native({ type: 'browseros-split', requestId: data.requestId });
+          return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/window') {
           if (!['chats', 'workspace'].includes(data.window) || !['show', 'hide', 'minimize', 'pin'].includes(data.action)) throw new Error('Unknown window action');

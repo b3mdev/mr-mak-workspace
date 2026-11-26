@@ -1,5 +1,5 @@
 import ContextUsage from './ContextUsage'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, onServiceEvent, reportError, selectChat, sendEvent, useDesktop, windowAction } from './client'
 import type { AgentId, ChatSession, Effort } from './types'
 import { defaultEffort, effortAgents, efforts } from './effort'
@@ -7,6 +7,7 @@ import { Icon } from './Icons'
 import MakLogo from '../components/MakLogo'
 import TerminalPane from './TerminalPane'
 import BrowserSettings from '../components/BrowserSettings'
+import BrowserOsSplit from './BrowserOsSplit'
 import SessionLogo from './SessionLogo'
 import { chatActivityLabel } from './chatActivity'
 import ChatTabs from './ChatTabs'
@@ -17,6 +18,7 @@ import DictationComposer from './DictationComposer'
 import ProjectPicker from './ProjectPicker'
 import AgentSelect from './AgentSelect'
 import Conversation from './Conversation'
+import ConversationTransfer from './ConversationTransfer'
 import { useChatStats } from './chatModel'
 import ModelMenu from './ModelMenu'
 import { chatView, hasConversationView, saveChatView, type ChatView } from './chatView'
@@ -81,7 +83,7 @@ function NewChat({ close }: { close: () => void }) {
   </form></div>
 }
 
-function History({ close, choose }: { close: () => void; choose: (id: string) => void }) {
+function History({ close, choose, read }: { close: () => void; choose: (id: string) => void; read: (id: string) => void }) {
   const { lang, t, date } = useT()
   const state = useDesktop()
   const [query, setQuery] = useState('')
@@ -108,10 +110,28 @@ function History({ close, choose }: { close: () => void; choose: (id: string) =>
     {group && counts && <div className="history-group-bar" role="group" aria-label={t('chats.groupBarAria', { group })}><span>{t('chats.groupBarCounts', { group, open: counts.open, history: counts.history })}</span>{confirmDelete ? <><span>{counts.open + counts.history === 1 ? t('chats.removeGroupOne') : t('chats.removeGroupMany', { count: counts.open + counts.history })}</span><button className="danger" onClick={() => deleteGroup(group)}>{t('chats.deleteGroup')}</button><button onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</button></> : <button onClick={() => setConfirmDelete(true)}>{t('chats.deleteGroupEllipsis')}</button>}</div>}
     <div className="history-list">{items.map(item => <article key={item.id} className="history-item">
       <button className="history-open" onClick={() => open(item)} disabled={!!opening} title={t('chats.openHistoryItemTitle', { name: item.name, activity: chatActivityLabel(item, lang) })}><span className="history-agent" style={{ color: state.agents.find(agent => agent.id === item.agent)?.color }}><SessionLogo session={item} size={24} /></span><span><strong>{item.name}</strong><small>{item.group ? `${item.group} · ` : ''}{state.agents.find(agent => agent.id === item.agent)?.label} · {item.open ? t('chats.openLabel') : date(item.updatedAt || item.createdAt, { month: 'short', day: 'numeric' })} · {item.cwd.split(/[\\/]/).filter(Boolean).slice(-1)[0]}</small>{item.preview && <p>{item.preview}</p>}</span><Icon name={opening === item.id ? 'refresh' : 'arrow'} size={16} /></button>
+      {hasConversationView(item) && item.nativeId && <button type="button" className="desk-icon history-read" aria-label={t('conv.readSaved', { name: item.name })} title={t('conv.readSaved', { name: item.name })} onClick={() => read(item.id)}><Icon name="eye" size={15} /></button>}
       <button className={`desk-icon history-pin ${item.pinned ? 'active' : ''}`} aria-label={t(item.pinned ? 'chats.unpinNamed' : 'chats.pinNamed', { name: item.name })} onClick={() => api(`/sessions/${item.id}`, { pinned: !item.pinned }, 'PATCH').catch(reportError)}><Icon name="pin" size={15} /></button>
     </article>)}{!items.length && <p className="desk-muted">{query ? t('chats.noMatchingConversations') : filter === 'pinned' ? t('chats.emptyPinned') : t('chats.emptyClosed')}</p>}</div>
     <footer>{t('chats.historyFooter')}</footer>
   </section>
+}
+
+function SavedConversation({ session, close }: { session: ChatSession; close: () => void }) {
+  const { t } = useT()
+  const { connected, agents, settings } = useDesktop()
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => { dialog.current?.showModal() }, [])
+  return <dialog ref={dialog} className="conversation-reader" aria-labelledby="saved-conversation-title" onClose={close}>
+    <header>
+      <h2 id="saved-conversation-title">{session.name}</h2>
+      <div className="conversation-transfer-actions">
+        <ConversationTransfer session={session} connected={connected} />
+        <button type="button" className="desk-icon" onClick={() => dialog.current?.close()} aria-label={t('common.close')}><Icon name="close" size={16} /></button>
+      </div>
+    </header>
+    <Conversation session={session} connected={connected} agentLabel={agents.find(agent => agent.id === session.agent)?.label || session.agent} systemEvents={settings.systemEvents} />
+  </dialog>
 }
 
 export default function Chats() {
@@ -120,6 +140,8 @@ export default function Chats() {
   const [newChat, setNewChat] = useState(false)
   const [switcher, setSwitcher] = useState(false)
   const [history, setHistory] = useState(false)
+  const [readingId, setReadingId] = useState<string | null>(null)
+  const reading = state.sessions.find(item => item.id === readingId)
   const [query, setQuery] = useState('')
   const [menu, setMenu] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -217,13 +239,14 @@ export default function Chats() {
   async function rename(event: React.FormEvent) { event.preventDefault(); if (!session) return; try { await api(`/sessions/${session.id}`, { name: title }, 'PATCH'); setRenaming(false) } catch (error) { reportError(error) } }
 
   return <div className="chats-surface">
-    <header className="chats-header"><div className="chats-brand"><MakLogo size={25} variant="chats" /><span>{t('brand.name')} <b>{t('brand.chatsWord')}</b></span></div><div className="chats-header-actions"><BrowserSettings target="chat" /><MobileAccess /><button className={`desk-icon ${pinned ? 'active' : ''}`} title={t('chats.pinAbove')} onClick={() => { setPinned(!pinned); windowAction('chats', 'pin', !pinned) }}><Icon name="pin" size={16} /></button><button className="desk-icon" title={t('chats.showWorkspace')} onClick={() => windowAction('workspace')}><Icon name="workspace" size={18} /></button></div></header>
+    <header className="chats-header"><div className="chats-brand"><MakLogo size={25} variant="chats" /><span>{t('brand.name')} <b>{t('brand.chatsWord')}</b></span></div><div className="chats-header-actions"><BrowserOsSplit connected={state.connected} /><BrowserSettings target="chat" /><MobileAccess /><button className={`desk-icon ${pinned ? 'active' : ''}`} title={t('chats.pinAbove')} onClick={() => { setPinned(!pinned); windowAction('chats', 'pin', !pinned) }}><Icon name="pin" size={16} /></button><button className="desk-icon" title={t('chats.showWorkspace')} onClick={() => windowAction('workspace')}><Icon name="workspace" size={18} /></button></div></header>
     <div className="chat-tabs-row"><ChatTabs items={active} selectedId={session?.id} agents={state.agents} groups={groups} collapsed={collapsed} groupColors={groupColors} historyCounts={historyCounts} choose={choose} close={closeChat} mark={markChat} toggleGroup={toggleGroup} collapseOthers={collapseOthers} setGroupColor={setGroupColor} /><div className="chat-tab-actions"><button className={`desk-icon ${byProject ? 'active' : ''}`} onClick={() => api('/groups/by-project', {}).catch(reportError)} title={byProject ? t('chats.ungroupTabs') : t('chats.groupByProject')} aria-label={t('chats.groupByProject')} aria-pressed={byProject}><Icon name="folder" size={16} /></button><button className="desk-icon new-chat-button" onClick={() => setNewChat(true)} title={`${t('chats.newChat')} · ${shortcutLabel('Shift+T')}`} aria-label={t('chats.newChat')}><Icon name="plus" /></button><button className={`desk-icon ${switcher ? 'active' : ''}`} onClick={() => { setSwitcher(value => !value); setHistory(false) }} title={`${t('chats.findChat')} · ${shortcutLabel('Shift+P')}`} aria-label={t('chats.findChat')}><Icon name="search" size={16} /></button><button className={`history-button ${history ? 'active' : ''}`} onClick={() => { setHistory(value => !value); setSwitcher(false); setMenu(false) }} title={`${t('chats.history')} · ${shortcutLabel('Shift+H')}`}><Icon name="history" size={15} /><span>{t('chats.history')}</span></button></div></div>
     <div className="chat-body">
-    {history && <History close={() => setHistory(false)} choose={choose} />}
+    {history && <History close={() => setHistory(false)} choose={choose} read={setReadingId} />}
+    {reading && <SavedConversation key={reading.id} session={reading} close={() => setReadingId(null)} />}
     {switcher && <div className="chat-switcher"><div className="switcher-search"><Icon name="search" size={16} /><input autoFocus placeholder={t('chats.findAnyChatPlaceholder')} value={query} onChange={event => setQuery(event.target.value)} /></div><div className="switcher-list">{filtered.map(item => <button key={item.id} onClick={() => choose(item.id)} className={session?.id === item.id ? 'selected' : ''}><span className="agent-letter" style={{ color: state.agents.find(a => a.id === item.agent)?.color }}><SessionLogo session={item} size={19} /></span><span><strong>{item.name}</strong><small>{item.group ? `${item.group} · ` : ''}{item.cwd}</small></span><span className="switcher-state">{chatActivityLabel(item, lang)}</span></button>)}{!filtered.length && <p className="desk-muted">{t('chats.noMatchingChats')}</p>}</div></div>}
     {session ? <>
-      <div className="chat-context"><span className="agent-label" style={{ color: agent?.color }}>{agent?.label}</span><span className="chat-folder" title={session.cwd}>{session.cwd.split(/[\\/]/).filter(Boolean).slice(-1)[0]}</span>{hasConversationView(session) && <div className="chat-view-toggle" role="group" aria-label={t('chats.chatViewAria')}>{([['conversation', 'chats', t('chats.viewConversation')], ['terminal', 'terminal', t('chats.viewTerminal')]] as const).map(([value, icon, label]) => <button key={value} aria-pressed={view === value} onClick={() => showView(value)}><Icon name={icon} size={12} />{label}</button>)}</div>}{view === 'terminal' && <><button className="desk-icon" title={t('chats.attachPathsTitle', { mod: modLabel })} aria-label={t('chats.attachFilesAria')} onClick={() => window.dispatchEvent(new Event('mrmak-attach-file'))}><Icon name="attach" size={16} /></button><DictationComposer key={`dictation-${session.id}`} id={session.id} connected={state.connected} running={session.status === 'running'} /></>}<button className="desk-icon" title={t('chats.chatOptions')} onClick={() => setMenu(!menu)}><Icon name="more" size={18} /></button></div>
+      <div className="chat-context"><span className="agent-label" style={{ color: agent?.color }}>{agent?.label}</span><span className="chat-folder" title={session.cwd}>{session.cwd.split(/[\\/]/).filter(Boolean).slice(-1)[0]}</span>{hasConversationView(session) && <div className="chat-view-toggle" role="group" aria-label={t('chats.chatViewAria')}>{([['conversation', 'chats', t('chats.viewConversation')], ['terminal', 'terminal', t('chats.viewTerminal')]] as const).map(([value, icon, label]) => <button key={value} aria-pressed={view === value} onClick={() => showView(value)}><Icon name={icon} size={12} />{label}</button>)}</div>}{view === 'conversation' && <ConversationTransfer key={session.id} session={session} connected={state.connected} />}{view === 'terminal' && <><button className="desk-icon" title={t('chats.attachPathsTitle', { mod: modLabel })} aria-label={t('chats.attachFilesAria')} onClick={() => window.dispatchEvent(new Event('mrmak-attach-file'))}><Icon name="attach" size={16} /></button><DictationComposer key={`dictation-${session.id}`} id={session.id} connected={state.connected} running={session.status === 'running'} /></>}<button className="desk-icon" title={t('chats.chatOptions')} onClick={() => setMenu(!menu)}><Icon name="more" size={18} /></button></div>
       {menu && <div className="chat-options">{renaming ? <form className="inline-rename" onSubmit={rename}><input autoFocus value={title} onChange={event => setTitle(event.target.value)} aria-label={t('chats.englishChatNameAria')} /><button type="submit">{t('common.save')}</button></form> : <button onClick={() => { setTitle(session.name); setRenaming(true) }}>{t('chats.renameChat')}</button>}<button onClick={() => api(`/sessions/${session.id}`, { pinned: !session.pinned }, 'PATCH').catch(reportError)}>{session.pinned ? t('chats.unpinFromHistory') : t('chats.pinInHistory')}</button><button onClick={() => api('/reveal', { path: session.cwd }).catch(reportError)}>{t('chats.showWorkingFolder')}</button><button onClick={() => api(`/sessions/${session.id}/clear`, {}).then(() => setMenu(false)).catch(reportError)} title={t('chats.clearScrollbackTitle')}>{t('chats.clearScrollback')}</button><div className="group-setting"><span>{t('chats.groupLabel')}</span><GroupPicker value={session.group} groups={groups} onChange={value => api(`/sessions/${session.id}`, { group: value }, 'PATCH').catch(reportError)} /></div><div className="chat-color-setting"><span>{t('chats.tabColor')}</span><div role="group" aria-label={t('chats.tabColor')}><button className={`tab-color-swatch no-color ${!session.tabColor ? 'selected' : ''}`} aria-label={t('chats.noTabColor')} aria-pressed={!session.tabColor} onClick={() => api(`/sessions/${session.id}`, { tabColor: null }, 'PATCH').catch(reportError)} title={t('chats.noColor')} />{tabColors.map(color => { const colorName = localizeTabColor(lang, color.name); return <button key={color.value} className={`tab-color-swatch ${session.tabColor === color.value ? 'selected' : ''}`} style={{ '--swatch': color.value } as React.CSSProperties} aria-label={t('chats.namedTabColor', { color: colorName })} aria-pressed={session.tabColor === color.value} title={colorName} onClick={() => api(`/sessions/${session.id}`, { tabColor: color.value }, 'PATCH').catch(reportError)} /> })}</div></div><div className="terminal-appearance-setting"><span>{t('settings.terminalAppearance')} <small>{t('chats.allChatsSmall')}</small></span><div role="group" aria-label={t('settings.terminalAppearance')}>{[['original', t('settings.terminalOriginal')], ['focus', t('settings.terminalFocusShort')]].map(([value, label]) => <button key={value} aria-pressed={(state.settings.terminalAppearance || 'original') === value} onClick={() => api('/settings', { terminalAppearance: value }).catch(reportError)}>{label}</button>)}</div><p><i className="legend-user" />{t('common.you')} <i className="legend-agent" />{t('chats.legendAgent')} <i className="legend-detail" />{t('chats.legendDetails')}</p></div><div className="option-select-setting"><span>{t('chats.suggestFreshChat')} <small>{t('chats.suggestFreshChatSub')}</small></span><select aria-label={t('chats.suggestFreshChatAria')} value={state.settings.handoffAt ?? 70} onChange={event => api('/settings', { handoffAt: Number(event.target.value) }).catch(reportError)}>{[[0, t('common.off')], [50, t('chats.contextPercentFull', { percent: 50 })], [70, t('chats.contextPercentFull', { percent: 70 })], [85, t('chats.contextPercentFull', { percent: 85 })]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div><div className="option-select-setting"><span>{t('chats.cliEvents')} <small>{t('chats.cliEventsSub')}</small></span><select aria-label={t('chats.cliEvents')} value={state.settings.systemEvents || 'compact'} onChange={event => api('/settings', { systemEvents: event.target.value }).catch(reportError)}>{[['compact', t('chats.cliEventsCompact')], ['full', t('chats.cliEventsFull')], ['hidden', t('chats.cliEventsHidden')]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div><div className="font-control"><span>{t('chats.terminalText')}</span><button onClick={() => changeFont(-1)}>−</button><span>{fontSize}</span><button onClick={() => changeFont(1)}>+</button></div><button onClick={() => { closeChat(session.id); setMenu(false) }}>{t('chats.closeTabKeepHistory')}</button></div>}
       <ContextUsage session={session} connected={state.connected} />
       {hasConversationView(session) && <HandoffOffer key={`handoff-${session.id}`} session={session} threshold={state.settings.handoffAt ?? 70} agentLabel={agent?.label || session.agent} />}

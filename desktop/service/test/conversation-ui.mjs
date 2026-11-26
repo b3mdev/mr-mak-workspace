@@ -14,7 +14,7 @@ const repo = await mkdtemp(path.join(root, '.cache/conversation-ui-'));
 await mkdir(path.join(repo, 'workspace')); await mkdir(path.join(repo, '.mrmak'));
 await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
 const ids = ['conversation-a', 'conversation-b', 'conversation-claude'];
-await writeFile(path.join(repo, '.mrmak/sessions.json'), JSON.stringify(ids.map((id, tabOrder) => ({ id, tabOrder, name: `Review ${tabOrder + 1}`, agent: id === 'conversation-claude' ? 'claude' : 'codex', group: 'Game', cwd: repo, open: true, status: 'stopped', pinned: false, hasConversation: false, cols: 90, rows: 28, createdAt: '2026-10-18T08:00:00Z', updatedAt: '2026-10-18T08:00:00Z' }))));
+await writeFile(path.join(repo, '.mrmak/sessions.json'), JSON.stringify(ids.map((id, tabOrder) => ({ id, tabOrder, name: `Review ${tabOrder + 1}`, agent: id === 'conversation-claude' ? 'claude' : 'codex', group: 'Game', cwd: repo, open: true, status: 'stopped', pinned: false, hasConversation: false, ...(id === ids[0] ? { nativeId: '00000000-0000-4000-8000-000000000001' } : {}), cols: 90, rows: 28, createdAt: '2026-10-18T08:00:00Z', updatedAt: '2026-10-18T08:00:00Z' }))));
 let service, browser;
 const writes = [], errors = [];
 let command = 'echo first', option = 0, showPrompt = false, multiple = null, own = null;
@@ -54,7 +54,11 @@ try {
   service.mobile.transcripts.read = async session => ({ supported: true, messages: [
     { id: 'user-1', role: 'user', text: `Review ${session.id}`, at: '2026-10-18T08:00:00Z' },
     { id: 'reply-1', role: 'assistant', text: '## Review ready\n\n**Verified** the character.\n\n[OpenAI](https://openai.com/)\n\n- Preserve the source\n- Review the result', at: '2026-10-18T08:00:10Z' },
-  ], activity: [] });
+  ], activity: [], hasOlder: session.id === ids[0] });
+  service.mobile.transcripts.older = async (_session, before) => {
+    assert.equal(before, 'user-1');
+    return { messages: [{ id: 'older-1', role: 'assistant', text: 'Earlier review note', at: '2026-10-18T07:59:00.000Z' }], hasOlder: false };
+  };
   const originalRead = service.sessions.read.bind(service.sessions);
   service.sessions.read = async (id, lines) => showPrompt && own ? { screen: ownScreen() } : showPrompt && multiple ? { screen: multipleScreen() } : showPrompt ? { screen: ['Allow command?', `$ ${command}`, '', ...['Yes, proceed', 'Yes, always', 'No'].map((label, i) => `${i === option ? '>' : ' '} ${i + 1}. ${label}`), 'Press enter to confirm'].join('\n') } : originalRead(id, lines);
   browser = await launchBrowser();
@@ -63,6 +67,14 @@ try {
   await page.goto(service.urls.chats);
   await page.getByRole('button', { name: 'Conversation', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review ready' })).toBeVisible();
+  await page.getByRole('button', { name: 'Load earlier messages' }).click();
+  await expect(page.getByText('Earlier review note')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Load earlier messages' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continue outside Bento' }).click();
+  const transfer = page.getByRole('dialog', { name: 'Continue outside Bento' });
+  await expect(transfer.getByRole('button', { name: 'Open in Codex' })).toBeEnabled();
+  await expect(transfer.getByRole('link', { name: 'Open ChatGPT' })).toHaveAttribute('href', 'https://chatgpt.com/');
+  await transfer.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.locator('.conversation-copy-text strong')).toHaveText('Verified');
   await expect(page.getByRole('link', { name: 'OpenAI', exact: true })).toHaveAttribute('target', '_blank');
   const input = page.getByRole('combobox', { name: 'Message Codex' });
@@ -75,6 +87,14 @@ try {
   await page.waitForResponse(response => /\/api\/sessions\/[^/]+\/messages$/.test(new URL(response.url()).pathname));
   await page.waitForTimeout(100);
   assert.ok(await page.getByRole('link', { name: 'OpenAI', exact: true }).evaluate(node => node === window.historyLink), 'an unchanged transcript poll must preserve rendered history');
+  await expect(page.getByText('Earlier review note')).toBeAttached();
+  await page.getByRole('button', { name: /^History/ }).click();
+  await page.getByRole('button', { name: 'Read Review 1' }).click();
+  const saved = page.getByRole('dialog', { name: 'Review 1' });
+  await expect(saved.getByRole('heading', { name: 'Review ready' })).toBeVisible();
+  await expect(saved.getByRole('combobox', { name: 'Message Codex' })).toHaveCount(0);
+  await saved.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Close History' }).click();
   const historyRoute = '**/api/sessions/*/messages';
   await page.route(historyRoute, async route => {
     const response = await route.fetch(), value = await response.json();

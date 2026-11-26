@@ -849,6 +849,18 @@ export const en = {
 
   // Conversation (Desktop)
   'conv.openPath': 'Open {path}',
+  'conv.loadHistory': 'Load earlier messages',
+  'conv.loadingHistory': 'Loading earlier messages…',
+  'conv.historyUnavailable': 'Earlier messages are unavailable in the local transcript.',
+  'conv.transfer': 'Continue outside Bento',
+  'conv.transferSameSession': 'Bento will close this tab, keep it in History, and open the same session in {app}.',
+  'conv.transferWait': 'Finish the current turn to continue in another app.',
+  'conv.transferOpening': 'Releasing conversation…',
+  'conv.transferNative': 'Open in {app}',
+  'conv.transferCopyHint': 'Copy the chat text to start a new conversation in ChatGPT.',
+  'conv.copyHistory': 'Copy history',
+  'conv.openChatGPT': 'Open ChatGPT',
+  'conv.readSaved': 'Read {name}',
   'conv.copyMessage': 'Copy message',
   'conv.refreshError': 'The conversation could not refresh. Earlier messages are still shown.',
   'conv.maxImages': 'Attach up to 12 images at a time.',
@@ -1285,6 +1297,12 @@ export const en = {
   'files.diffEmpty': 'No changes against the last commit.',
   'files.mapSuffix': '{name} · size map',
   'workspace.desktopOnlyEdit': 'Open the desktop app to edit Workspace cards.',
+  'browserOs.sideBySide': 'Open BrowserOS neo beside Chats',
+  'browserOs.missing': 'Install BrowserOS neo to use the side-by-side view.',
+  'browserOs.startFailed': 'BrowserOS neo could not start.',
+  'browserOs.windowMissing': 'BrowserOS neo started but no browser window appeared.',
+  'browserOs.screenTooSmall': 'This screen is too small for Chats and BrowserOS neo side by side.',
+  'browserOs.moveFailed': 'Windows could not arrange Chats and BrowserOS neo side by side.',
 } as const
 
 export type MessageKey = keyof typeof en

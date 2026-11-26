@@ -39,6 +39,19 @@ const serviceToEn: Record<string, string> = {
 }
 
 const serviceToPtBR: Record<string, string> = {
+  'Choose a message to read earlier history.': 'Escolha uma mensagem para ler o histórico anterior.',
+  'This conversation has no readable local history.': 'Esta conversa ainda não tem um histórico local legível.',
+  'This chat does not have a saved native conversation yet.': 'Este chat ainda não tem uma sessão nativa salva.',
+  'The original chat folder is unavailable.': 'A pasta original do chat está indisponível.',
+  'Windows Terminal is required to continue this chat outside Bento.': 'O Windows Terminal é necessário para continuar este chat fora do Bento.',
+  'A graphical terminal is required to continue this chat outside Bento.': 'Um terminal gráfico é necessário para continuar este chat fora do Bento.',
+  'This agent does not support continuing outside Bento.': 'Este agente não permite continuar a sessão fora do Bento.',
+  'The Antigravity conversation ID is invalid.': 'O identificador da conversa no Antigravity é inválido.',
+  'The original agent CLI is unavailable.': 'O CLI do agente original está indisponível.',
+  'This chat is already opening or closing.': 'Este chat já está abrindo ou fechando.',
+  'Finish the current turn before moving this conversation.': 'Conclua o turno atual antes de transferir esta conversa.',
+  'This conversation is moving to another application.': 'Esta conversa está sendo transferida para outro aplicativo.',
+  'The external app could not open. Your conversation is saved in Bento History.': 'Não foi possível abrir o destino. A conversa está salva no Histórico do Bento.',
   'The coordinator request was stopped. Check the target before repeating an action.': 'O pedido foi interrompido. Confira o destino antes de repetir a ação.',
   'The coordinator context changed. Send the request again if needed.': 'O contexto mudou. Envie o pedido novamente se precisar.',
   'The coordinator timed out. Inspect chats before retrying; actions may already have been delivered.': 'O coordenador demorou demais. Confira os chats antes de tentar de novo, pois alguma ação pode já ter sido enviada.',

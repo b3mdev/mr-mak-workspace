@@ -33,7 +33,7 @@ with sample conversations and the included My Dream Game project.*
 
 ## Read and answer a chat as a conversation
 
-Claude Code and Codex chats have a **Conversation | Terminal** switch. The
+Codex, Claude Code, Antigravity and OpenCode chats have a **Conversation | Terminal** switch. The
 Conversation view reads the CLI's own transcript and shows it as messages, with
 Markdown, images and recent tool activity. Its composer sends text, attachments
 and dictation to the same terminal, and **Stop** (Esc) interrupts the agent.
@@ -43,6 +43,17 @@ and dictation to the same terminal, and **Stop** (Esc) interrupts the agent.
 A new chat opens in Terminal until it has a conversation, so folder-trust and
 sign-in questions are never hidden. Links to local files in a reply open a
 Workspace preview, resolved against the chat's folder.
+
+- **Read earlier messages.** Scroll to the top of Conversation and select
+  **Load earlier messages** to page through the native transcript. The eye
+  button in **History** opens a saved conversation for reading.
+- **Continue outside Bento.** In Conversation, the external link button can
+  save the tab to History and release the native session before opening it in
+  Codex, Claude Code or Antigravity CLI. **Copy history** places the chat text
+  on your clipboard for a new conversation in ChatGPT.
+- **Show BrowserOS neo beside Chats.** On Windows, the split button in the
+  Chats header places Bento on the left and the native BrowserOS neo window on
+  the right, using the browser's existing profile.
 
 - **Answer permission menus with a click.** When the CLI asks for permission,
   the numbered menu at the bottom of the terminal appears as buttons. Before
