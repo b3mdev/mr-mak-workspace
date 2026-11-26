@@ -16,14 +16,14 @@ await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
 const ids = ['conversation-a', 'conversation-b', 'conversation-claude'];
 await writeFile(path.join(repo, '.mrmak/sessions.json'), JSON.stringify(ids.map((id, tabOrder) => ({ id, tabOrder, name: `Review ${tabOrder + 1}`, agent: id === 'conversation-claude' ? 'claude' : 'codex', group: 'Game', cwd: repo, open: true, status: 'stopped', pinned: false, hasConversation: false, ...(id === ids[0] ? { nativeId: '00000000-0000-4000-8000-000000000001' } : {}), cols: 90, rows: 28, createdAt: '2026-10-18T08:00:00Z', updatedAt: '2026-10-18T08:00:00Z' }))));
 let service, browser;
-const writes = [], errors = [];
+const writes = [], errors = [], nativeRequests = [];
 let command = 'echo first', option = 0, showPrompt = false, multiple = null, own = null;
 // Claude Code's multiple choice: boxed options, an unnumbered button, then Chat about this.
 const multipleScreen = () => ['│ Which fruits do you want?', '', ...['Apple', 'Banana', 'Grape', 'Type something'].map((label, i) => `${multiple.focus === i ? '❯' : ' '} ${i + 1}. [${multiple.checked[i] ? '✔' : ' '}] ${label}`), `${multiple.focus === 4 ? '❯' : ' '}    Next`, '──────────', `${multiple.focus === 5 ? '❯' : ' '} 5. Chat about this`, '', 'Enter to select · Tab/Arrow keys to navigate · Esc to cancel'].join('\n');
 // Claude Code's single choice with its own-answer option, as Claude Code draws it.
 const ownScreen = () => ['│ Which sound should the tree make?', '', ...['Generate in ElevenLabs', 'Keep the placeholder'].map((label, i) => `${own.focus === i ? '❯' : ' '} ${i + 1}. ${label}`), `${own.focus === 2 ? '❯' : ' '} 3. ${own.typed || 'Type something.'}`, '──────────', `${own.focus === 3 ? '❯' : ' '} 4. Chat about this`, '', `Enter to select · ↑/↓ to navigate${own.focus === 2 ? ' · ctrl+g to edit in Notepad' : ''} · Esc to cancel`].join('\n');
 try {
-  service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: repo, env: {} } });
+  service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: repo, env: {} }, native: event => nativeRequests.push(event) });
   service.sessions.launch = session => {
     session.status = 'running'; session.restoreError = null;
     session.process = { resize() {}, write(data) {
@@ -65,6 +65,23 @@ try {
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
   page.setDefaultTimeout(12000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.chats);
+  if (process.platform === 'win32') {
+    for (const width of [900, 390]) {
+      await page.setViewportSize({ width, height: 760 });
+      const split = page.getByRole('button', { name: 'Open BrowserOS neo beside Chats' });
+      const [response] = await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname === '/api/browseros/split'),
+        split.click(),
+      ]);
+      assert.equal(response.status(), 200);
+      const event = nativeRequests.filter(message => message.type === 'browseros-split').at(-1);
+      assert.ok(event?.requestId, 'the header button requests the native split');
+      await page.evaluate(requestId => window.dispatchEvent(new CustomEvent('mrmak-browseros-split-result', { detail: { requestId, error: 'missing' } })), event.requestId);
+      await expect(page.getByRole('alert')).toContainText('Install BrowserOS neo to use the side-by-side view.');
+      await page.getByRole('button', { name: 'Dismiss error' }).click();
+    }
+    await page.setViewportSize({ width: 900, height: 760 });
+  }
   await page.getByRole('button', { name: 'Conversation', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review ready' })).toBeVisible();
   await page.getByRole('button', { name: 'Load earlier messages' }).click();

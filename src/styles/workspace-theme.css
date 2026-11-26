@@ -106,8 +106,6 @@ html[data-workspace-theme] .home .entity-card{background:var(--surface-solid)}
 .chats-header .browser-settings{z-index:40;align-self:center;margin-right:4px}
 .chats-header .browser-settings>summary{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;background:transparent}
 .chats-header .browser-settings-panel{max-height:calc(100dvh - 65px);overflow-y:auto}
-.chats-root .voice-dock.chats{right:153px}
-@media(max-width:400px){.chats-root .voice-dock.chats{right:149px}}
 html[data-workspace-theme] .desktop-root :is(button,input,select,textarea,summary):focus-visible{outline:2px solid var(--pink);outline-offset:2px}
 html[data-workspace-theme] .desktop-root ::selection{background:var(--pink-dim);color:var(--text-bright)}
 html[data-workspace-theme] .desktop-root .conversation-send{color:var(--on-accent)}
