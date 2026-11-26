@@ -14,12 +14,19 @@ const uiDir = path.join(repo, 'ui');
 await cp(path.join(root, 'dist'), uiDir, { recursive: true });
 for (const name of ['bento-icon-32.png', 'bento-icon-192.png', 'bento-chats-32.png', 'bento-chats-192.png']) await copyFile(path.join(root, 'public/assets', name), path.join(uiDir, 'assets', name)).catch(() => {});
 await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
-const service = await createService({ repo, uiDir, codexUsageQuery: async () => ({ quotas: [], total: null, at: Date.now() }), mcpOptions: { home: repo, env: {} } });
+const service = await createService({ repo, uiDir, mcpOptions: { home: repo, env: {} } });
 const requests = [];
 let fail = false;
+let stalled;
 service.coordinator.ask = async data => {
   requests.push(data);
-  const operation = { ...data, at: new Date().toISOString(), status: fail ? 'failed' : 'completed', result: fail ? 'Fixture request failed. Please retry.' : 'Fixture completed.' };
+  const hanging = stalled && data.text === 'Stalled draft';
+  if (hanging) {
+    stalled.resolve();
+    await new Promise(resolve => service.coordinator.run.signal.addEventListener('abort', resolve, { once: true }));
+  }
+  const result = fail ? 'Fixture request failed. Please retry.' : data.text === 'Long voice result' ? 'São Paulo 🐷 日本語 '.repeat(1000) : 'Fixture completed.';
+  const operation = { ...data, at: new Date().toISOString(), status: hanging ? 'interrupted' : fail ? 'failed' : 'completed', result };
   service.coordinator.operations.set(data.id, operation);
   service.coordinator.emit('result', operation);
   return operation;
@@ -186,7 +193,54 @@ try {
     await attached.getByRole('button', { name: /^Remove / }).click();
     assert.equal(await attached.count(), 0);
   }
+  const input = page.getByRole('textbox', { name: 'Message Bento Workspace' });
+  stalled = Promise.withResolvers();
+  await input.fill('Stalled draft'); await input.press('Enter');
+  await stalled.promise;
+  await page.getByRole('button', { name: 'Stop request', exact: true }).click();
+  await page.getByText('Coordinator stopped.', { exact: false }).waitFor();
+  await input.waitFor({ state: 'visible' });
+  assert.equal(await input.inputValue(), 'Stalled draft');
+  assert.equal(await input.isEnabled(), true);
+  stalled = null;
+
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+  await page.waitForFunction(() => window.fixtureVoice.channel?.readyState === 'open');
+  await page.evaluate(() => {
+    window.fixtureVoice.sent = [];
+    window.fixtureVoice.emit({ type: 'session.started' });
+    window.fixtureVoice.emit({ type: 'session.input_transcript.delta', delta: 'Long voice result' });
+    window.fixtureVoice.emit({ type: 'session.delegation.created', delegation: { id: 'large-result' } });
+  });
+  await page.waitForFunction(() => window.fixtureVoice.sent.some(item => item.type === 'session.commentary.append' && item.delegation_id === 'large-result'));
+  const appends = await page.evaluate(() => window.fixtureVoice.sent.filter(item => item.type.endsWith('.append')).map(item => ({ bytes: new TextEncoder().encode(item.content).length, text: item.content })));
+  assert.ok(appends.every(item => item.bytes <= 400));
+  assert.ok(appends.some(item => item.text.startsWith('completed: São Paulo') && item.text.endsWith('…')));
+
+  await page.getByRole('button', { name: 'Reset context', exact: true }).click();
+  await page.getByText('Context reset.', { exact: false }).waitFor();
+  assert.equal(await page.locator('.voice-dock').getAttribute('data-voice-status'), 'off');
+  assert.equal(await page.evaluate(() => window.fixtureVoice.track.stopped), true);
+  assert.equal(await page.locator('.mak-exchange').filter({ hasText: 'Review this screenshot' }).count() > 0, true);
+
+  await page.getByRole('button', { name: 'Local context', exact: true }).click();
+  await page.getByRole('heading', { name: 'Computer', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Today', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'User profile', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(repo, 'local-context.png') });
+
+  const chats = await browser.newPage();
+  await chats.goto(service.urls.chats);
+  await chats.getByRole('button', { name: 'Toggle conversation' }).click();
+  assert.ok(await chats.locator('.mak-exchange').count());
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.getByText('New conversation ready.').waitFor();
+  await chats.locator('.mak-exchange').first().waitFor({ state: 'detached' });
+  await chats.close();
+  assert.equal(await page.locator('.mak-exchange').count(), 0);
+  assert.equal(await input.inputValue(), '');
+  assert.equal(await page.locator('.previous-voice').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('Talk to Mak: newline/send/IME, dismissable errors, image paste/upload/preview/removal, retry and hidden-panel draft retention passed in both windows.');
+  console.log('Talk to Bento: text, attachments, voice append limits, recovery, local context and conversation sync passed.');
   console.log(`Screenshots: ${repo}`);
 } finally { await browser?.close(); await service.close(); }

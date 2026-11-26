@@ -48,7 +48,9 @@ export default function MakComposer({ connected, sending, onSend }: {
     try {
       await onSend(draft.trim() || 'Please review the attached images.', images.map(image => image.path))
       setDraft(''); setImages([])
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setError(error instanceof Error ? error.message : String(error))
+    }
     finally { busy.current = false }
   }
 

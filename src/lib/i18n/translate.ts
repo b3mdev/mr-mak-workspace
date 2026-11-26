@@ -39,6 +39,10 @@ const serviceToEn: Record<string, string> = {
 }
 
 const serviceToPtBR: Record<string, string> = {
+  'The coordinator request was stopped. Check the target before repeating an action.': 'O pedido foi interrompido. Confira o destino antes de repetir a ação.',
+  'The coordinator context changed. Send the request again if needed.': 'O contexto mudou. Envie o pedido novamente se precisar.',
+  'The coordinator timed out. Inspect chats before retrying; actions may already have been delivered.': 'O coordenador demorou demais. Confira os chats antes de tentar de novo, pois alguma ação pode já ter sido enviada.',
+  'Context append text must not exceed 500 tokens.': 'A voz recebeu contexto demais. Use Nova conversa e inicie a voz novamente.',
   'Use an English chat name. Messages can be in any language.': 'Use um nome de chat em inglês. As mensagens podem ser em qualquer idioma.',
   'Use an English group name. Messages can be in any language.': 'Use um nome de grupo em inglês. As mensagens podem ser em qualquer idioma.',
   'Choose a supported speech-to-text provider.': 'Escolha um provedor de ditado compatível.',

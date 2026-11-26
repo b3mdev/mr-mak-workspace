@@ -97,18 +97,20 @@ export class QuickActions {
     }
     return null;
   }
-  ask(request) {
+  ask(request, signal) {
     if (!request.id || typeof request.text !== 'string' || !request.text.trim() || request.text.length > 30000) return Promise.reject(new Error('A request ID and a non-empty message are required'));
     if (this.pending.has(request.id)) return this.pending.get(request.id);
     if (this.operations.has(request.id)) return Promise.resolve(this.operations.get(request.id));
     const promise = (async () => {
       const action = await this.plan(request);
+      signal?.throwIfAborted();
       if (!action) return null;
-      const operation = { id: request.id, text: request.text, status: 'running', at: new Date().toISOString(), route: 'direct' };
+      const { id, text, conversationId = 0, contextRevision = 0 } = request;
+      const operation = { id, text, conversationId, contextRevision, status: 'running', at: new Date().toISOString(), route: 'direct' };
       this.operations.set(request.id, operation); await this.save();
       const start = performance.now();
-      try { operation.result = await action(); operation.status = 'completed'; }
-      catch (error) { operation.result = publicError(error); operation.status = 'failed'; }
+      try { signal?.throwIfAborted(); operation.result = await action(); operation.status = 'completed'; }
+      catch (error) { operation.result = publicError(error); operation.status = signal?.aborted ? 'interrupted' : 'failed'; }
       operation.durationMs = Math.round(performance.now() - start);
       await this.save(); this.completed(operation); return operation;
     })();

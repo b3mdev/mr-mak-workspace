@@ -20,7 +20,7 @@ const listeners = new Set<() => void>()
 const events = new Set<(event: ServiceEvent) => void>()
 let state: DesktopState = {
   ready: false, connected: false, error: null, repo: '', contentBase: '', agents: [], sessions: [], selectedId: null, notices: [],
-  settings: { defaultAgent: 'codex', defaultBypass: false }, coordinator: 'idle', voice: { configured: false, owner: null }, operations: [], preview: null, voiceHistory: [],
+  settings: { defaultAgent: 'codex', defaultBypass: false }, coordinator: 'idle', coordinatorConversation: { conversationId: 0, contextRevision: 0 }, voice: { configured: false, owner: null }, operations: [], preview: null, voiceHistory: [],
 }
 let socket: WebSocket | null = null
 let started = false
@@ -33,8 +33,17 @@ export const setPreview = (preview: Preview | null) => update({ preview })
 export const dismissError = () => update({ error: null })
 export const reportError = (error: unknown) => update({ error: error instanceof Error ? error.message : String(error) })
 export const contentUrl = (relative: string) => isDesktop ? `${state.contentBase}${relative}` : relative
+export function applyCoordinatorConversation(snapshot: ServiceEvent, reconnect = false) {
+  const conversation = snapshot.coordinatorConversation
+  if (!conversation || (!reconnect && conversation.contextRevision <= state.coordinatorConversation.contextRevision)) return
+  update({
+    coordinatorConversation: conversation, coordinator: snapshot.state || 'idle',
+    operations: snapshot.operations || [], voiceHistory: snapshot.voiceHistory || [],
+    voice: { ...state.voice, owner: snapshot.voiceOwner || null },
+  })
+}
 
-export async function api<T>(path: string, data?: unknown, method?: string, options: { keepalive?: boolean } = {}): Promise<T> {
+export async function api<T>(path: string, data?: unknown, method?: string, options: { keepalive?: boolean; signal?: AbortSignal } = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...options,
     method: method || (data === undefined ? 'GET' : 'POST'),
@@ -107,6 +116,7 @@ function connect() {
   socket.onopen = () => socket?.send(JSON.stringify({ type: 'auth', token, clientId, surface }))
   socket.onmessage = ({ data }) => {
     const event = JSON.parse(data) as ServiceEvent
+    if (event.type === 'connected' || event.type === 'coordinator-conversation') applyCoordinatorConversation(event, event.type === 'connected')
     if (event.type === 'connected') update({ connected: true, sessions: event.sessions || state.sessions, selectedId: event.selectedId ?? state.selectedId, coordinator: event.state || state.coordinator, error: null })
     if (event.type === 'selection') update({ selectedId: event.selectedId || null })
     if (event.type === 'session' && event.session) {
@@ -119,10 +129,11 @@ function connect() {
     }
     if (event.type === 'service-error') reportError(event.error || tNow('client.connectionError'))
     if (event.type === 'coordinator-state') update({ coordinator: event.state || 'idle' })
-    if (event.type === 'coordinator-result' && event.operation) {
+    if (event.type === 'coordinator-result' && event.operation && (event.operation.conversationId ?? 0) === state.coordinatorConversation.conversationId) {
       const operation = event.operation
       update({ operations: [...state.operations.filter(item => item.id !== operation.id), operation].slice(-50) })
     }
+    if (event.type === 'voice-history' && event.voiceHistory) update({ voiceHistory: event.voiceHistory })
     if (event.type === 'settings' && event.settings) update({ settings: event.settings })
     if (event.type === 'notice' && event.notice) update({ notices: [...state.notices, event.notice].slice(-100) })
     if (event.type === 'voice-owner') update({ voice: { ...state.voice, owner: event.owner || null } })

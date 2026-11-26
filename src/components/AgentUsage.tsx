@@ -17,7 +17,7 @@ interface Quota {
 }
 type UsageSnapshot = Record<UsageAgent, { total: number | null; at: number | null; quotas: Quota[] }> & { checkedAt: number }
 
-function QuotaRow({ quota, expired }: { quota: Quota; expired: boolean }) {
+function QuotaRow({ quota, expired, compact = false }: { quota: Quota; expired: boolean; compact?: boolean }) {
   const { t, number, dateTime } = useT()
   const minutes = quota.minutes
   const duration = minutes === null ? null
@@ -34,7 +34,7 @@ function QuotaRow({ quota, expired }: { quota: Quota; expired: boolean }) {
         : quota.remaining !== null && <strong>{t('usage.remaining', { count: number(quota.remaining) })}</strong>)}
     </div>
     {!expired && percent !== null && <meter min={0} max={100} value={Math.min(percent, 100)} aria-label={label} data-near-limit={percent >= 90} />}
-    {quota.resetsAt !== null && <small>{expired
+    {!compact && quota.resetsAt !== null && <small>{expired
       ? t('usage.awaitingUpdate')
       : t('usage.resets', { time: dateTime(quota.resetsAt) })}</small>}
   </li>
@@ -46,6 +46,7 @@ export default function AgentUsage() {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const pending = useRef(false)
   const refresh = useCallback(async () => {
     if (pending.current) return
@@ -75,6 +76,7 @@ export default function AgentUsage() {
     : failed ? t('usage.refreshFailed')
     : loading ? t('usage.loading')
     : snapshot ? t('usage.checked', { time: dateTime(snapshot.checkedAt) }) : ''
+  const isExpired = (quota: Quota) => quota.resetsAt !== null && quota.resetsAt <= (snapshot?.checkedAt ?? 0)
   return <section className="project-section agent-usage" aria-labelledby="agent-usage-title">
     <div className="project-section-header">
       <h2 id="agent-usage-title">{t('usage.title')}</h2>
@@ -83,11 +85,29 @@ export default function AgentUsage() {
         <button type="button" className="project-icon-button" disabled={!connected || loading} onClick={() => void refresh()} title={t('usage.refresh')} aria-label={t('usage.refresh')}>
           <Icon name="refresh" size={17} />
         </button>
+        <button type="button" className="project-icon-button agent-usage-toggle" aria-expanded={expanded} aria-controls="agent-usage-grid" onClick={() => setExpanded(value => !value)}>
+          {t(expanded ? 'usage.collapse' : 'usage.expand')}
+          <Icon name={expanded ? 'up' : 'down'} size={15} />
+        </button>
       </div>
     </div>
-    <div className="agent-usage-grid">
+    <div id="agent-usage-grid" className={`agent-usage-grid${expanded ? '' : ' agent-usage-grid-compact'}`}>
       {(Object.keys(agents) as UsageAgent[]).map(agent => {
         const report = snapshot?.[agent]
+        if (!expanded) {
+          const quotas = report?.quotas.filter(quota => !isExpired(quota)) ?? []
+          const highestUsage = quotas.reduce<Quota | undefined>((highest, quota) => {
+            if (quota.percent === null) return highest
+            return highest?.percent == null || quota.percent > highest.percent ? quota : highest
+          }, undefined)
+          const quota = highestUsage ?? quotas.find(quota => quota.remaining !== null)
+          return <article className="agent-usage-card" data-agent={agent} key={agent}>
+            <h3><AgentLogo agent={agent} size={17} />{agents[agent]}</h3>
+            {quota
+              ? <ul className="agent-usage-summary" aria-label={t('usage.quotas')}><QuotaRow quota={quota} expired={false} compact /></ul>
+              : (!loading || report) && <p className="agent-usage-missing">{t('usage.unavailable')}</p>}
+          </article>
+        }
         const chats = sessions.filter(chat => chat.agent === agent && chat.open)
         const working = chats.filter(chat => chat.status === 'running' && chat.activity === 'working').length
         return <article className="agent-usage-card" data-agent={agent} key={agent}>
@@ -100,7 +120,7 @@ export default function AgentUsage() {
           <div className="agent-usage-quotas">
             <h4>{t('usage.quotas')}</h4>
             {report?.quotas.length
-              ? <ul>{report.quotas.map(quota => <QuotaRow key={quota.key} quota={quota} expired={quota.resetsAt !== null && quota.resetsAt <= (snapshot?.checkedAt ?? 0)} />)}</ul>
+              ? <ul>{report.quotas.map(quota => <QuotaRow key={quota.key} quota={quota} expired={isExpired(quota)} />)}</ul>
               : <p className="agent-usage-missing">{t('usage.unavailable')}</p>}
           </div>
           {report?.at != null && (report.total !== null || report.quotas.length > 0) && <small className="agent-usage-timestamp">{t('usage.reported', { time: dateTime(report.at) })}</small>}

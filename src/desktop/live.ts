@@ -1,10 +1,21 @@
 import { api, clientId, desktopState, surface } from './client'
-import type { Operation } from './types'
+import type { CoordinatorConversation, Operation } from './types'
 import { tNow } from '../lib/i18n/translate'
 
 export interface Caption { role: 'user' | 'assistant'; text: string; start: number; end: number }
 export interface LiveState { status: 'off' | 'connecting' | 'live' | 'closing' | 'error'; error: string; captions: Caption[]; startedAt: number | null; audible: boolean }
 interface LiveEvent { type: string; delta?: string; start_ms?: number; end_ms?: number; offset_ms?: number; delegation?: { id: string }; session?: { id: string }; error?: { message?: string }; message?: string }
+
+// Live caps each appended message at 500 tokens. A 400-byte UTF-8 ceiling
+// leaves room for tokenization overhead, including non-Latin text and emoji.
+function boundedAppend(text: string) {
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(text)
+  if (bytes.length <= 400) return text
+  const prefix = new Uint8Array(397)
+  const { written } = encoder.encodeInto(text, prefix)
+  return new TextDecoder().decode(prefix.subarray(0, written)) + '…'
+}
 
 export class LiveVoice {
   state: LiveState = { status: 'off', error: '', captions: [], startedAt: null, audible: true }
@@ -16,6 +27,8 @@ export class LiveVoice {
   private generation = 0
   private ready = false
   private sessionId = ''
+  private connectionId = ''
+  private conversation: CoordinatorConversation | null = null
   private inputFragments: { sequence: number; text: string }[] = []
   private nextInputSequence = 0
   private lastHandledSequence = -1
@@ -30,18 +43,32 @@ export class LiveVoice {
   dismissError() { this.update({ error: '', ...(this.state.status === 'error' ? { status: 'off' as const } : {}) }) }
   private update(patch: Partial<LiveState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()) }
   private event(value: unknown) { if (this.ready && this.channel?.readyState === 'open') this.channel.send(JSON.stringify(value)) }
+  private append(type: 'thinking' | 'commentary', text: string, delegationId: string | null = null) {
+    this.event({ type: `session.${type}.append`, event_id: crypto.randomUUID(), delegation_id: delegationId, content: boundedAppend(text) })
+  }
   context() {
+    if (!this.ready) return
     const state = desktopState()
-    const context = JSON.stringify({ selectedChat: state.sessions.find(item => item.id === state.selectedId)?.name || null, chats: state.sessions.filter(item => item.open).map(item => ({ id: item.id, name: item.name, agent: item.agent, status: item.status, attention: item.attention })), page: document.title }).slice(0, 1700)
+    const selectedChat = state.sessions.find(item => item.id === state.selectedId)?.name || 'none'
+    const context = `Current UI state (reference data). Open chats: ${state.sessions.filter(item => item.open).length}. Selected chat: ${selectedChat}.`
     if (context === this.lastContext) return
     this.lastContext = context
-    this.event({ type: 'session.thinking.append', event_id: crypto.randomUUID(), delegation_id: null, content: `Current UI state (reference data): ${context}` })
+    this.append('thinking', context)
   }
-  announce(text: string) { this.event({ type: 'session.commentary.append', event_id: crypto.randomUUID(), delegation_id: null, content: text.slice(0, 1500) }) }
+  announce(text: string) { this.append('commentary', text) }
+  syncConversation(conversation: CoordinatorConversation) {
+    if (!this.conversation || conversation.contextRevision === this.conversation.contextRevision) return
+    this.cleanup()
+    this.conversation = null
+    this.update({ status: 'off', error: '', captions: [], startedAt: null, audible: true })
+  }
   async start() {
     if (['live', 'connecting', 'closing'].includes(this.state.status)) return
     const generation = ++this.generation
-    this.update({ status: 'connecting', error: '', captions: [], startedAt: null })
+    const connectionId = this.connectionId = crypto.randomUUID()
+    const conversation = this.conversation = desktopState().coordinatorConversation
+    this.sessionId = ''
+    this.update({ status: 'connecting', error: '', captions: [], startedAt: null, audible: true })
     this.inputFragments = []; this.nextInputSequence = 0; this.lastHandledSequence = -1
     this.delegated.clear(); this.lastContext = ''; this.ready = false
     try {
@@ -62,8 +89,8 @@ export class LiveVoice {
         peer.addEventListener('icegatheringstatechange', changed); changed()
       })
       if (generation !== this.generation) return
-      const result = await api<{ session: { id: string }; transport: { sdp: string } }>('/live/session', { sdp: peer.localDescription?.sdp, clientId, surface })
-      if (generation !== this.generation) { await api('/live/release', { clientId }); return }
+      const result = await api<{ session: { id: string }; transport: { sdp: string } }>('/live/session', { sdp: peer.localDescription?.sdp, clientId, connectionId, surface, contextRevision: conversation.contextRevision })
+      if (generation !== this.generation) { await api('/live/release', { clientId, connectionId }); return }
       this.sessionId = result.session.id
       this.startTimer = window.setTimeout(() => this.fail(tNow('live.openAiDidNotStart')), 25000)
       await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp })
@@ -103,12 +130,12 @@ export class LiveVoice {
     const captions = this.state.captions
     const newInput = this.inputFragments.filter(item => item.sequence > this.lastHandledSequence)
     const text = newInput.map(item => item.text).join('').trim()
-    if (!text) { this.event({ type: 'session.commentary.append', event_id: crypto.randomUUID(), delegation_id: id, content: 'No complete user transcript was available for this request. Ask the user to repeat the instruction briefly.' }); return }
+    if (!text) { this.append('commentary', 'No complete user transcript was available for this request. Ask the user to repeat the instruction briefly.', id); return }
     this.lastHandledSequence = Math.max(...newInput.map(item => item.sequence))
-    this.event({ type: 'session.thinking.append', event_id: crypto.randomUUID(), delegation_id: id, content: 'The requested action is pending. Wait for the verified result. Do not narrate internal routing or repeat a progress phrase.' })
-    const operation = await api<Operation>('/coordinator', { id: `${this.sessionId}:${id}`, text, selectedId: desktopState().selectedId, conversation: captions.slice(-20).map(item => `${item.role}: ${item.text}`).join('\n') })
+    this.append('thinking', 'The requested action is pending. Wait for the verified result. Do not narrate internal routing or repeat a progress phrase.', id)
+    const operation = await api<Operation>('/coordinator', { id: `${this.sessionId}:${id}`, text, selectedId: desktopState().selectedId, contextRevision: this.conversation?.contextRevision, conversation: captions.slice(-20).map(item => `${item.role}: ${item.text}`).join('\n') })
     if (generation !== this.generation) return
-    this.event({ type: 'session.commentary.append', event_id: crypto.randomUUID(), delegation_id: id, content: `${operation.status}: ${operation.result || 'No result was returned.'}`.slice(0, 1500) })
+    this.append('commentary', `${operation.status}: ${operation.result || 'No result was returned.'}`, id)
     this.context()
   }
   stop() {
@@ -124,7 +151,7 @@ export class LiveVoice {
   disconnect() { if (['live', 'connecting'].includes(this.state.status)) { this.cleanup(); this.update({ status: 'error', error: tNow('live.localConnectionLost'), startedAt: null }) } }
   private fail(message: string) { this.cleanup(); this.update({ status: 'error', error: message, startedAt: null }) }
   private saveTranscript() {
-    if (this.sessionId && this.state.captions.length) api('/live/transcript', { id: this.sessionId, captions: this.state.captions.slice(-50).map(item => ({ ...item, text: item.text.slice(0, 1000) })) }).catch(() => {})
+    if (this.sessionId && this.state.captions.length) api('/live/transcript', { id: this.sessionId, conversationId: this.conversation?.conversationId, captions: this.state.captions.slice(-50).map(item => ({ ...item, text: item.text.slice(0, 1000) })) }).catch(() => {})
   }
   private cleanup() {
     this.saveTranscript(); clearTimeout(this.transcriptTimer); this.transcriptTimer = 0
@@ -135,7 +162,8 @@ export class LiveVoice {
     this.channel?.close(); this.channel = null; this.peer?.close(); this.peer = null
     this.audio.pause(); this.audio.srcObject = null
     // keepalive: cleanup also runs on pagehide, and WebKit cancels ordinary requests from a closing page.
-    api('/live/release', { clientId }, undefined, { keepalive: true }).catch(() => {})
+    if (this.connectionId) api('/live/release', { clientId, connectionId: this.connectionId }, undefined, { keepalive: true }).catch(() => {})
+    this.connectionId = ''; this.sessionId = ''
   }
 }
 

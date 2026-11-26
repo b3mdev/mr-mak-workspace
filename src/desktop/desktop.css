@@ -165,6 +165,20 @@
 .terminal-area{position:relative;display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;overflow:hidden;padding:10px 5px 7px 13px}.terminal-drop{position:absolute;inset:8px;z-index:8;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;border:1px dashed color-mix(in srgb,var(--pink) 53%,transparent);border-radius:11px;background:color-mix(in srgb,var(--surface-solid) 93%,transparent);pointer-events:none;color:var(--pink)}.terminal-drop strong{font-size:16px;font-weight:500}.terminal-drop span{font-size:11px;color:var(--text-dim)}.chat-status .attachment-status{min-width:0;color:var(--green);font-size:9px;pointer-events:none}.attachment-status>svg{flex-shrink:0}.attachment-status>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-entry{position:relative}.file-entry.has-reveal>.file-row{padding-right:32px}.file-reveal{position:absolute;right:3px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--text-dim);opacity:0;pointer-events:none;transition:opacity .1s ease}.file-entry:hover>.file-reveal,.file-entry:focus-within>.file-reveal{opacity:1;pointer-events:auto}.file-reveal:hover{color:var(--pink);background:color-mix(in srgb,var(--pink) 9%,transparent)}.file-reveal:focus-visible{outline:1px solid color-mix(in srgb,var(--pink) 24%,transparent);outline-offset:-1px}
 .voice-settings{padding:6px 16px 9px;border-bottom:1px solid color-mix(in srgb,var(--text) 12%,transparent);display:flex;align-items:center;gap:8px;font-size:9px;color:var(--text-dim)}.voice-settings select{font:inherit;color:var(--text);background:var(--surface-solid);border:1px solid color-mix(in srgb,var(--text) 12%,transparent);border-radius:5px;padding:4px 6px;max-width:140px}.voice-settings label{display:flex;align-items:center;gap:7px}.voice-settings>span{margin-left:auto;color:var(--text-dim)}
+.voice-panel{max-height:calc(100dvh - 92px)}.voice-panel[hidden]{display:none}
+.voice-panel>.voice-messages{min-height:0;flex:1 1 auto}
+.coordinator-actions{display:flex;flex-wrap:wrap;gap:6px;padding:9px 16px 2px}
+.coordinator-actions button,.coordinator-context-heading button{font-size:11px;padding:5px 8px}
+.coordinator-feedback{font-size:11px;line-height:1.5;margin:8px 16px 0;color:var(--text-dim)}
+.coordinator-context{color:var(--text);font-size:12px;line-height:1.5;padding-bottom:10px;overflow-wrap:anywhere}
+.coordinator-context-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text-dim)}
+.coordinator-context section{padding-top:10px;margin-top:10px;border-top:1px solid color-mix(in srgb,var(--text) 12%,transparent)}
+.coordinator-context h3{font-size:12px;margin:0 0 5px}
+.coordinator-context p{margin:4px 0}
+.coordinator-context .voice-error{margin:8px 0}
+.coordinator-source{margin:6px 0}
+.coordinator-source summary{cursor:pointer;color:var(--text)}
+.coordinator-source p{white-space:pre-wrap;padding-left:12px;color:var(--text-dim)}
 .previous-voice{font-size:10px;color:var(--pink);margin-bottom:16px}.previous-voice summary{cursor:pointer;padding:8px 0 12px}.previous-voice[open]{border-bottom:1px solid color-mix(in srgb,var(--text) 12%,transparent)}
 
 /* Microphone recording controls in the Mak composer. */

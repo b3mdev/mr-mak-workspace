@@ -34,6 +34,18 @@ delayed first prompts, and reads bounded metadata records larger than one small
 buffer. Closing or resuming a tab can recover a missing ID from its exact Mr. Mak
 origin marker. Shared working directories alone are not proof of ownership.
 
+The coordinator panel offers **Stop request**, **Reset context**, and **New
+conversation**. Stopping cancels the current and queued coordinator requests.
+Check worker terminals for any actions they already received. Resetting starts
+fresh model context and keeps the messages visible. A new conversation also
+clears the panel. Both actions end the current live voice connection.
+
+**Local context** reads the computer, date and time zone directly from the
+Workspace service. It also shows excerpts from optional profile files in
+`context/` and today's optional note at `context/daily/YYYY-MM-DD.md`. Refresh
+the tab after editing those files. The coordinator consults them on demand
+through the [local-context skill](../.agents/skills/local-context/SKILL.md).
+
 New Codex, Claude and Antigravity chats default to `xhigh`; explicit saved effort
 choices are preserved. Settings and New chat offer a default reasoning-effort
 picker for subsequent chats. Terminal URLs and OSC 8 links use xterm link handlers. New-window
