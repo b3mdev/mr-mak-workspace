@@ -25,6 +25,9 @@ import { body, equalSecret, json, publicError, readJson, realFile, saveJson, sec
 import { ProjectAdapterRegistry } from './project-adapters/registry.mjs';
 import { KnowledgeManager, MarkdownKnowledgeProvider } from './knowledge/providers.mjs';
 import { IntegrationManager } from './integrations/manager.mjs';
+import { TelegramIntegration } from './integrations/telegram.mjs';
+import { watchTelegramWork, workReply } from './integrations/telegram-work.mjs';
+import { telegramConversation } from './integrations/telegram-conversation.mjs';
 import { MobileDictation } from './mobile-dictation.mjs';
 import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
@@ -49,7 +52,7 @@ import { defaultUiLanguage, isUiLanguage, resolveUiLanguage } from './language.m
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions, notificationSources }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions, notificationSources, telegramOptions }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -261,6 +264,16 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     return coordinator.ask({ ...request, images });
   };
   coordinator.on('state', state => broadcast('coordinator-state', { state }));
+  const telegram = await new TelegramIntegration({
+    dir: path.join(networkStateDir || stateDir, 'telegram'),
+    reply: workReply(sessions, () => settings.defaultBypass === true),
+    converse: telegramConversation({ key: async () => {
+      const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
+      return keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY;
+    } }),
+    ...telegramOptions, changed: () => broadcast('telegram-state', {}),
+  }).init();
+  const stopTelegramWork = watchTelegramWork(sessions, event => { void telegram.publish(event); });
   coordinator.on('result', operation => broadcast('coordinator-result', { operation }));
   coordinator.on('error-detail', error => broadcast('service-error', { error }));
   sessions.on('session', session => { broadcast('session', { session }); integrations.publish('session', { event: session.status, session }).catch(() => {}); });
@@ -318,6 +331,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'POST' && url.pathname === '/api/transcribe') return json(response, 200, await dictation.transcribe(request, 'desktop', () => !closing));
         const data = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? await body(request, url.pathname === '/api/files/markdown' ? 12 * 1024 * 1024 : url.pathname.startsWith('/api/workspace/cards') ? 2 * 1024 * 1024 : 256 * 1024) : {};
         if (method === 'POST' && url.pathname === '/api/dictation') return json(response, 200, await chooseDictation(data.provider));
+        if (method === 'GET' && url.pathname === '/api/telegram') return json(response, 200, telegram.status());
+        if (method === 'POST' && url.pathname === '/api/telegram') return json(response, 200, await telegram.configure(data.action, data.enabled));
         if (method === 'GET' && url.pathname === '/api/mobile') return json(response, 200, mobile.status());
         if (method === 'GET' && url.pathname === '/api/mobile/check') return json(response, 200, await mobile.transport.probe());
         if (method === 'POST' && url.pathname === '/api/mobile/enable') return json(response, 200, await mobile.enable());
@@ -675,6 +690,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
       nativeMessage: event => nativeSettings.receive(event),
       async close() {
         if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
+      stopTelegramWork(); await telegram.close();
       watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); await notifications.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
       dictation.close(); await network.close(); await mobile.close();
       for (const ws of wss.clients) ws.terminate();

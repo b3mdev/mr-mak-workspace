@@ -344,6 +344,7 @@ export class Sessions extends EventEmitter {
     if (event.kind === 'turn-started') {
       if (session.activity === 'working') return;
       session.turnEpoch++;
+      session.turnInputVersion = session.inputVersion;
       session.activity = 'working'; session.attention = false; session.notificationAttention = null;
     } else if (event.kind === 'turn-interrupted') {
       if (session.activity === 'waiting') session.attention = session.unread;
@@ -364,6 +365,7 @@ export class Sessions extends EventEmitter {
       session.completionProcess = session.process;
       session.completionInputVersion = session.inputVersion;
       session.completionTurnEpoch = session.turnEpoch;
+      session.telegramCompletionInputVersion = session.activity === 'working' ? session.turnInputVersion : undefined;
       session.activity = 'idle'; session.unread = true; session.attention = true; session.notificationAttention = null;
       session.completionVersion++;
       if (event.preview) session.preview = event.preview;
@@ -494,7 +496,7 @@ export class Sessions extends EventEmitter {
       // can be swallowed by a paste guard, especially after resume.
       const revision = session.inputVersion;
       const submitCurrent = () => {
-        if (session.process !== target || session.inputVersion !== revision) return false;
+        if (session.transferring || session.process !== target || session.inputVersion !== revision) return false;
         target.write('\r');
         return true;
       };
