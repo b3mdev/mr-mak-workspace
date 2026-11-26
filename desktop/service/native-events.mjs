@@ -4,6 +4,31 @@ import os from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import { nativeContext, unknownContext } from './native-context.mjs';
 
+// Claude's native tool result confirms loading through Skill. Prompt text,
+// command echoes, tool errors and subagent activity are not confirmations.
+export function claudeSkillLoaded(record, pending) {
+  if (record.isSidechain || !Array.isArray(record.message?.content)) return [];
+  if (record.type === 'assistant' && typeof record.uuid === 'string') {
+    for (const block of record.message.content) {
+      if (block.type !== 'tool_use' || block.name !== 'Skill' || typeof block.id !== 'string' ||
+          typeof block.input?.skill !== 'string' || !/^[\w:.-]{1,160}$/.test(block.input.skill)) continue;
+      pending.set(block.id, { name: block.input.skill, source: record.uuid });
+      if (pending.size > 128) pending.delete(pending.keys().next().value);
+    }
+  }
+  if (record.type !== 'user') return [];
+  const loaded = new Set();
+  for (const block of record.message.content) {
+    if (block.type !== 'tool_result') continue;
+    const entry = pending.get(block.tool_use_id);
+    if (!entry) continue;
+    pending.delete(block.tool_use_id);
+    if (block.is_error !== true && record.sourceToolAssistantUUID === entry.source &&
+        record.toolUseResult?.success === true && record.toolUseResult.commandName === entry.name) loaded.add(entry.name);
+  }
+  return [...loaded];
+}
+
 export function completedTurn(record, agent) {
   if (agent === 'codex' && record.type === 'event_msg' && record.payload?.type === 'task_complete') return { kind: 'turn-completed', id: record.payload.turn_id, text: 'The agent finished its turn. Review the result.', preview: String(record.payload.last_agent_message || '').slice(-350) };
   // Claude writes thinking and text as separate records with the same message ID
@@ -48,6 +73,7 @@ export function nativeActivity(record, agent) {
 // Only read records appended after this managed session starts. These files belong
 // to the native CLI; MR-MAK never modifies them or replaces the user's hooks.
 export function tailNativeFile(file, agent, onEvent, from = 0) {
+  const skillCalls = new Map();
   let offset = from, partial = '', closed = false, reading = false, decoder = new StringDecoder('utf8');
   let hydrate = from > 0, unavailable = false;
   const reset = reason => { if (!closed) onEvent({ kind: 'context-usage', usage: unknownContext(agent, reason) }); };
@@ -57,7 +83,7 @@ export function tailNativeFile(file, agent, onEvent, from = 0) {
     try {
       const info = await stat(file);
       unavailable = false;
-      if (info.size < offset) { offset = 0; partial = ''; decoder = new StringDecoder('utf8'); hydrate = false; reset('waiting'); }
+      if (info.size < offset) { offset = 0; partial = ''; decoder = new StringDecoder('utf8'); hydrate = false; skillCalls.clear(); reset('waiting'); }
       if (hydrate) {
         // Restore only context before the launch boundary. Historic activity must
         // not become an unread completion on resume. Keep the read bounded.
@@ -87,6 +113,9 @@ export function tailNativeFile(file, agent, onEvent, from = 0) {
         for (const line of lines) {
           try {
             const record = JSON.parse(line);
+            if (agent === 'claude' && !closed) {
+              for (const name of claudeSkillLoaded(record, skillCalls)) onEvent({ kind: 'skill-loaded', name });
+            }
             const context = nativeContext(record, agent);
             if (context && !closed) onEvent(context);
             const event = nativeActivity(record, agent);

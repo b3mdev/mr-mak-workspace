@@ -39,6 +39,11 @@ const serviceToEn: Record<string, string> = {
 }
 
 const serviceToPtBR: Record<string, string> = {
+  'The skill file is no longer available.': 'O arquivo da skill não está mais disponível.',
+  'This agent does not support per-chat skill settings.': 'Este agente não oferece configurações de skills por chat.',
+  'This skill file is read-only.': 'Este arquivo da skill é somente leitura.',
+  'The skill changed on disk. Reopen the file before saving.': 'A skill mudou no disco. Reabra o arquivo antes de salvar.',
+  'Enter skill instructions up to 256 KiB.': 'Escreva instruções para a skill de até 256 KiB.',
   'Choose a message to read earlier history.': 'Escolha uma mensagem para ler o histórico anterior.',
   'This conversation has no readable local history.': 'Esta conversa ainda não tem um histórico local legível.',
   'This chat does not have a saved native conversation yet.': 'Este chat ainda não tem uma sessão nativa salva.',

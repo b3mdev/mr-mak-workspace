@@ -5,6 +5,7 @@ export type AgentId = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'kimi' |
 export type Effort = 'medium' | 'high' | 'xhigh' | 'max'
 export interface AgentInfo { id: AgentId; label: string; color: string; available: boolean; subscription: boolean }
 export interface ChatSession {
+  skillEvidenceVersion?: number
   id: string; name: string; agent: AgentId; cwd: string; bypass: boolean
   /** The footer menu can also choose low for a Claude chat. */
   effort?: Effort | 'low'

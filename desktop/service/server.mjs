@@ -27,6 +27,7 @@ import { MobileDictation } from './mobile-dictation.mjs';
 import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
+import { ChatSkills } from './chat-skills.mjs';
 import { releaseConversation } from './conversation-transfer.mjs';
 import { projectKey, recentProjects } from './recent-projects.mjs';
 import { projectGallery } from './project-gallery.mjs';
@@ -45,7 +46,7 @@ import { defaultUiLanguage, isUiLanguage, resolveUiLanguage } from './language.m
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -58,7 +59,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const projects = new ProjectAdapterRegistry();
   const integrations = await new IntegrationManager(stateDir).init();
   const mcp = new McpInventory(repo, mcpOptions);
-  const sessions = await new Sessions(repo, stateDir).init();
+  const chatSkills = new ChatSkills({ ...mcpOptions, ...chatSkillOptions });
+  const sessions = await new Sessions(repo, stateDir, { chatSkills }).init();
   const readUsage = usageReader(repo, stateDir, () => sessions.items.values(), codexUsageQuery);
   const transcripts = new ConversationTranscripts();
   const fileInsights = new FileInsights();
@@ -453,6 +455,21 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
             return json(response, 200, { messages: history.messages.filter(message => message.role !== 'system' && message.text.trim()).map(({ role, text }) => ({ role, text })) });
           }
           if (method === 'GET' && action === 'commands') { const session = sessions.get(id); return json(response, 200, await chatCommands(session.agent, session.cwd, mcpOptions)); }
+          if (action === 'skills') {
+            const session = sessions.get(id);
+            if (method === 'GET') {
+              const skill = url.searchParams.get('skill');
+              return json(response, 200, skill ? await chatSkills.detail(session, skill) : await chatSkills.list(session));
+            }
+            if (method === 'POST' && data.action === 'save') {
+              return json(response, 200, await chatSkills.save(session, data.skill, data.revision, data.instructions));
+            }
+            if (method === 'POST' && data.action === 'setEnabled') {
+              await chatSkills.setEnabled(session, data.skill, data.enabled);
+              await sessions.persist();
+              return json(response, 200, await chatSkills.list(session));
+            }
+          }
           if (method === 'GET' && action === 'stats') {
             const session = sessions.get(id);
             const { supported, userMessages = 0, truncated = false, model = null, effort = null, modelName = null } = await liveStats(session, await transcripts.read(session), stateDir);

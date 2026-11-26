@@ -29,8 +29,8 @@ async function workingFolder(value) {
   return process.platform === 'win32' ? folder : realpath(folder).catch(() => folder);
 }
 const publicSession = session => {
-  const { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze } = session;
-  return { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze: handoffSnooze || null, contextUsage: session.contextUsage };
+  const { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze, skillEvidenceVersion } = session;
+  return { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze: handoffSnooze || null, contextUsage: session.contextUsage, skillEvidenceVersion };
 };
 
 // Grouped tabs sit together at the position of their earliest open member; a tab
@@ -53,10 +53,11 @@ const REPORT = /^(?:\x1b\[[?>0-9;]*[RcnIO]|\x1b\[\?[0-9;]*\$y|\x1b\[<\d+;\d+;\d+
 export const terminalReport = data => REPORT.test(data);
 
 export class Sessions extends EventEmitter {
-  constructor(repo, stateDir) {
+  constructor(repo, stateDir, { chatSkills } = {}) {
     super();
     this.repo = repo;
     this.stateDir = stateDir;
+    this.chatSkills = chatSkills;
     this.items = new Map();
     this.saveChain = Promise.resolve();
     this.dirty = false;
@@ -195,13 +196,17 @@ export class Sessions extends EventEmitter {
     const noDaemon = session.agent === 'codex' && await codexSupportsNoDaemon(env);
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
     const settings = await statusSettings(this.stateDir, session, env).catch(() => null);
+    const skillOverrides = await this.chatSkills?.launch(session, env) || [];
     if (session.agent === 'antigravity') Object.assign(env, antigravityStatusEnvironment(settings));
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
-    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, nativeId: session.nativeId, effort: session.effort, model: session.agent === 'claude' ? session.model : undefined, settings, opencodeMajor, antigravityLog, noDaemon, ...first });
+    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, nativeId: session.nativeId, effort: session.effort, model: session.agent === 'claude' ? session.model : undefined, settings, opencodeMajor, antigravityLog, noDaemon, skillOverrides, ...first });
     if (session.agent === 'codex') env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = `mrmak_chat_${session.id}`;
     if (session.terminal) this.resetTerminal(session);
     const proc = pty.spawn(command.file, command.args, ptyOptions({ cwd: session.cwd, env, cols: session.cols, rows: session.rows }));
     session.process = proc;
+    session.loadedSkills = new Set();
+    session.appliedSkillOverrides = skillOverrides;
+    session.skillEvidenceVersion = (session.skillEvidenceVersion || 0) + 1;
     session.deviceReplies?.dispose();
     // Inactive tabs still have a terminal: answer device queries without needing
     // a visible renderer. The UI suppresses its duplicate protocol replies.
@@ -321,6 +326,14 @@ export class Sessions extends EventEmitter {
   }
 
   nativeEvent(session, event) {
+    if (event.kind === 'skill-loaded') {
+      session.loadedSkills ||= new Set();
+      if (session.loadedSkills.has(event.name)) return;
+      session.loadedSkills.add(event.name);
+      session.skillEvidenceVersion = (session.skillEvidenceVersion || 0) + 1;
+      this.changed(session);
+      return;
+    }
     if (event.kind === 'context-usage') {
       session.contextUsage = event.usage;
       this.changed(session);
@@ -778,7 +791,10 @@ export class Sessions extends EventEmitter {
   async persist() {
     this.saveChain = this.saveChain.catch(() => {}).then(async () => {
       this.dirty = false;
-      const list = this.list().map(item => ({ ...item, projectGroup: this.items.get(item.id).projectGroup || undefined }));
+      const list = this.list().map(({ skillEvidenceVersion: _version, ...item }) => {
+        const session = this.items.get(item.id);
+        return { ...item, projectGroup: session.projectGroup || undefined, skillOverrides: session.skillOverrides };
+      });
       await saveJson(path.join(this.stateDir, 'sessions.json'), list);
       // A second durable copy, written after the main file, for recovery.
       const text = JSON.stringify(list);

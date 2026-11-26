@@ -54,6 +54,10 @@ Workspace preview, resolved against the chat's folder.
 - **Show BrowserOS neo beside Chats.** On Windows, the split button in the
   Chats header places Bento on the left and the native BrowserOS neo window on
   the right, using the browser's existing profile.
+- **Inspect chat skills.** The badge column beside Conversation and Terminal
+  opens the skill's instructions, scope, and session status. On supported
+  Codex versions, an enablement choice applies the next time Bento starts that
+  chat. See [chat skill badges](docs/chat-skill-badges.md).
 
 - **Answer permission menus with a click.** When the CLI asks for permission,
   the numbered menu at the bottom of the terminal appears as buttons. Before
