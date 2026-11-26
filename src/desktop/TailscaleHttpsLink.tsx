@@ -1,3 +1,6 @@
+import { useT } from '../lib/i18n'
+
 export default function TailscaleHttpsLink() {
-  return <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">Abrir DNS no painel do Tailscale</a>
+  const { t } = useT()
+  return <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">{t('tailscale.openDns')}</a>
 }

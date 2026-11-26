@@ -8,11 +8,22 @@ import { QuickActions } from '../quick-actions.mjs';
 test('voice session keeps the English default even with a custom delivery style', () => {
   for (const settings of [{}, { voiceStyle: 'Warm, calm and brisk.' }]) {
     const session = voiceSession(settings);
-    assert.match(session.instructions, /Language: Speak English by default/);
+    assert.match(session.instructions, /If none is specified, speak English by default/);
     assert.match(session.instructions, /only when the user explicitly asks/);
     assert.doesNotMatch(session.instructions, /russian|[\u0400-\u04ff]/iu);
   }
   assert.match(defaultVoiceStyle, /Speak English by default/);
+});
+
+test('the saved speaking preference takes priority over the English fallback for both Live voices', () => {
+  const voiceStyle = 'Speak Brazilian Portuguese by default with natural Brazilian pronunciation.';
+  for (const voiceName of ['cedar', 'marin']) {
+    const session = voiceSession({ voiceName, voiceStyle });
+    assert.equal(session.audio.output.voice, voiceName);
+    assert.ok(session.instructions.includes(voiceStyle));
+    assert.match(session.instructions, /Honor an explicit default spoken language in Voice and personality/);
+    assert.doesNotMatch(session.instructions, /Keep greetings, confirmations, summaries and task handoffs in English/);
+  }
 });
 
 test('quick command confirmations and empty results are English without a model', async () => {

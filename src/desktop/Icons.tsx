@@ -14,6 +14,29 @@ export function AgentLogo({ agent, size = 18 }: { agent: AgentId; size?: number 
 export function Nose({ size = 30 }: { size?: number }) {
   return <MakLogo size={size} />
 }
+
+export function ListeningEar({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.1"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={`voice-ear-svg ${className}`.trim()}
+    >
+      <path d="M4.5 9a6 6 0 1 1 12 0c0 5.5-5.2 5.6-5.2 9.2a3.2 3.2 0 1 1-6.4 0" />
+      <path d="M13.2 9a2.7 2.7 0 0 0-5.4 0v1a2 2 0 1 1 0 4" />
+      <path className="ear-wave-1" d="M18.8 7.5a5 5 0 0 1 0 6" />
+      <path className="ear-wave-2" d="M21.2 5.2a8.2 8.2 0 0 1 0 10.6" />
+    </svg>
+  )
+}
+
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
   const paths: Record<string, string> = {
     network: 'M9 3h6v5H9ZM3 16h6v5H3ZM15 16h6v5h-6ZM12 8v4M6 16v-4h12v4',
@@ -35,6 +58,7 @@ export function Icon({ name, size = 18, style }: { name: string; size?: number; 
     terminal: 'm5 7 5 5-5 5M13 17h6', bell: 'M5 16h14l-2-3V8a5 5 0 0 0-10 0v5ZM10 20h4', 'bell-off': 'M5 16h14l-2-3V8a5 5 0 0 0-10 0v5ZM10 20h4M3 3l18 18', refresh: 'M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M18 18A8 8 0 0 1 5 16',
     down: 'm5 9 7 7 7-7', enter: 'M19 4v9H5m5-5-5 5 5 5', tab: 'M4 12h13m-5-5 5 5-5 5M20 5v14', escape: 'M14 4h6v16h-6M16 12H4m5-5-5 5 5 5', copy: 'M9 9h12v12H9ZM15 9V3H3v12h6', edit: 'M4 20h4L19 9l-4-4L4 16ZM13 7l4 4', trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
     history: 'M3 5v5h5M4 9a9 9 0 1 1 0 6M12 7v5l3 2', eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6', attach: 'm8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2M5 15l9-9', clean: 'm9 4 11 11M6 7l11 11-4 4L2 11ZM2 22h20',
+    ear: 'M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4',
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true"><path d={paths[name] || paths.files} /></svg>
 }

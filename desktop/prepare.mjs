@@ -99,6 +99,7 @@ if (process.platform === 'darwin') {
 await mkdir(path.join(runtime, 'service'), { recursive: true });
 const serviceSource = path.join(repo, 'desktop', 'service');
 await cp(serviceSource, path.join(runtime, 'service'), { recursive: true, filter: source => !path.relative(serviceSource, source).split(path.sep).some(part => ['node_modules', 'test', '.cache'].includes(part)) });
+await cp(path.join(repo, '.agents', 'skills', 'local-context'), path.join(runtime, 'service', 'skills', 'local-context'), { recursive: true });
 // A checkout can itself live under a cache/worktree directory. Validate the
 // payload before npm can resolve an unrelated parent package.json.
 for (const file of ['package.json', 'package-lock.json', 'main.mjs', 'server.mjs']) await access(path.join(runtime, 'service', file));

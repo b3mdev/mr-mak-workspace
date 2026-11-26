@@ -32,7 +32,7 @@ const dictation = new MobileDictation(repo, { env: { OPENROUTER_API_KEY: 'test-v
   voiceCalls.push({ url, size: options.body.get('file').size });
   return Response.json({ text: 'A dictated follow-up.' });
 } });
-const service = await createService({ repo, uiDir: path.join(repo, 'ui'), mobileOptions: { transport, dictation }, mcpOptions: { home: repo, env: {} } });
+const service = await createService({ repo, uiDir: path.join(repo, 'ui'), mobileOptions: { transport, dictation }, codexUsageQuery: async () => ({ quotas: [], total: null, at: Date.now() }), mcpOptions: { home: repo, env: {} } });
 service.sessions.beginDiscovery = () => {};
 // Lost replies: the server handles the request, then the connection drops before
 // the reply. The phone's requests pass through its service worker, which
@@ -194,7 +194,7 @@ try {
   await desktop.getByRole('button', { name: 'Connect phone', exact: true }).click();
   await phone.getByRole('heading', { name: 'Chats', exact: true }).waitFor();
   await desktop.getByText('Connected now', { exact: true }).waitFor();
-  assert.deepEqual(await phone.locator('.mobile-header button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Reconnect', 'New chat', 'History', 'Chats', 'Results', 'Phone settings']);
+  assert.deepEqual(await phone.locator('.mobile-header button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Reconnect', 'New chat', 'History', 'Chats', 'Results', 'Rede', 'Phone settings']);
   await phone.getByRole('button', { name: 'History', exact: true }).click();
   await phone.getByRole('heading', { name: 'History', exact: true }).waitFor();
   assert.deepEqual(await phone.locator('.mobile-main-nav button.active').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['History']);
@@ -379,14 +379,14 @@ try {
   assert.equal(await phone.evaluate(() => window.testSpeech.paused), false);
   assert.equal(await phone.locator('.mobile-messages select').count(), 0, 'Voice selection stays in settings');
   await phone.getByRole('button', { name: 'Phone settings' }).click();
-  const readingVoice = phone.getByRole('combobox', { name: 'English reading voice' });
-  await expect(readingVoice.locator('option')).toHaveCount(2);
-  assert.deepEqual(await readingVoice.locator('option').evaluateAll(options => options.map(option => option.value)), ['am_michael', 'bf_emma']);
-  await readingVoice.selectOption('bf_emma');
-  assert.equal(await phone.evaluate(() => localStorage.getItem('mrmak.mobile.read-aloud.voice')), 'bf_emma');
+  const readingVoice = phone.getByRole('combobox', { name: 'Reading voice' });
+  await expect(readingVoice.locator('option')).toHaveCount(5);
+  assert.deepEqual(await readingVoice.locator('option').evaluateAll(options => options.map(option => option.value)), ['am_michael', 'bf_emma', 'pf_dora', 'pm_alex', 'pm_santa']);
+  await readingVoice.selectOption('pf_dora');
+  assert.equal(await phone.evaluate(() => localStorage.getItem('mrmak.mobile.read-aloud.voice')), 'pf_dora');
   await phone.getByRole('button', { name: 'Phone settings' }).click();
   await readButton.click();
-  await phone.waitForFunction(() => window.testSpeech.spoken.at(-1)?.voice === 'bf_emma');
+  await phone.waitForFunction(() => window.testSpeech.spoken.at(-1)?.voice === 'pf_dora');
   await phone.getByRole('button', { name: 'Stop reading' }).click();
   assert.equal(await phone.evaluate(() => window.testSpeech.current), null);
   await readButton.click();

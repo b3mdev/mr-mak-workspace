@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react'
 import App from './App'
 import { isDesktop } from './desktop/client'
 import WorkspaceTheme from './components/WorkspaceTheme'
+import UiLanguage from './components/UiLanguage'
 import './styles/tokens.css'
 import './styles/global.css'
 import './styles/workspace-theme.css'
@@ -17,6 +18,7 @@ const isMobile = location.pathname === '/mobile' || location.pathname.startsWith
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <UiLanguage />
     {!isMobile && <WorkspaceTheme />}
     <Suspense fallback={<div className="boot" />}>
       {isMobile ? <MobileApp /> : isDesktop ? <DesktopApp /> : <App />}

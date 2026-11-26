@@ -1,4 +1,5 @@
 import type { ThemePreference } from '../../desktop/service/appearance.mjs'
+import type { UiLanguage } from '../../desktop/service/language.mjs'
 
 export type AgentId = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'kimi' | 'shell'
 export type Effort = 'medium' | 'high' | 'xhigh' | 'max'
@@ -28,8 +29,15 @@ export interface GalleryProject extends RecentProject { cover: string | null; re
 export interface ProjectGallery { projects: GalleryProject[]; covers: Record<string, string> }
 export interface Handoff { status: 'summarizing' | 'opening' | 'done' | 'failed'; error?: string | null; sessionId?: string | null; file?: string | null; at: string }
 export interface Notice { id: string; sessionId: string; name: string; kind: string; text: string; at: string }
-export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[] }
-export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
+export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[]; conversationId?: number; contextRevision?: number }
+export interface CoordinatorConversation { conversationId: number; contextRevision: number }
+export interface ContextSource { path: string; available: boolean; text?: string; truncated?: boolean }
+export interface LocalContext {
+  computer: { os: string; release: string; architecture: string; logicalCpus: number; memoryGiB: number }
+  day: { date: string; timeZone: string; observedAt: string }
+  profile: ContextSource[]; daily: ContextSource
+}
+export interface Settings { defaultAgent: AgentId; transcribeProvider?: 'local' | 'openai' | 'openrouter' | 'off'; defaultBypass: boolean; defaultEffort?: Effort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; workspaceTheme?: ThemePreference; chatTheme?: ThemePreference; uiLanguage?: UiLanguage; selectedId?: string | null; coordinatorEffort?: 'medium' | 'high'; voiceName?: string; voiceStyle?: string; handoffAfter?: number; handoffAt?: number; terminalOptionMeta?: boolean; collapsedGroups?: string[]; groupColors?: Record<string, string>; systemEvents?: SystemEventsMode }
 export type SystemEventsMode = 'full' | 'compact' | 'hidden'
 export interface VoiceOwner { clientId: string; surface: 'chats' | 'workspace' }
 export interface FileEntry { name: string; path: string; directory: boolean; size: number; modifiedAt: string | null }
@@ -39,7 +47,7 @@ export interface Preview { path: string; name: string; size: number; kind: 'docu
 export interface DesktopState {
   ready: boolean; connected: boolean; error: string | null; repo: string; contentBase: string
   agents: AgentInfo[]; sessions: ChatSession[]; selectedId: string | null; notices: Notice[]
-  settings: Settings; coordinator: string; voice: { configured: boolean; owner: VoiceOwner | null }
+  settings: Settings; coordinator: string; coordinatorConversation: CoordinatorConversation; voice: { configured: boolean; owner: VoiceOwner | null }
   operations: Operation[]; preview: Preview | null
   voiceHistory: { id: string; at: string; captions: { role: 'user' | 'assistant'; text: string; start: number; end: number }[] }[]
 }
@@ -47,4 +55,5 @@ export interface ServiceEvent {
   type: string; id?: string; data?: string; sequence?: number; session?: ChatSession; sessions?: ChatSession[]
   selectedId?: string; sessionId?: string; state?: string; error?: string; notice?: Notice
   operation?: Operation; settings?: Settings; owner?: VoiceOwner | null; window?: string; route?: string; preview?: Preview; handoff?: Handoff
+  coordinatorConversation?: CoordinatorConversation; operations?: Operation[]; voiceHistory?: DesktopState['voiceHistory']; voiceOwner?: VoiceOwner | null
 }

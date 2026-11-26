@@ -283,10 +283,10 @@ media. Tap it to read; during playback it becomes Pause/Resume, with a Stop icon
 It reads your most recent message and all following agent messages through that
 reply, with Pause, Resume and Stop controls. New replies do not extend speech
 already playing; tap Read aloud again to include them.
-Speech is generated locally on your computer with Kokoro ONNX. Phone settings
-has exactly Michael (US man) and Emma (UK woman); the choice is saved on that
-phone. Browser voice lists and other accents are not used. No API key or paid
-speech provider is required. Run the read-aloud command from
+Speech is generated locally on your computer with Kokoro ONNX. Choose Michael
+(US English), Emma (UK English), Dora, Alex or Santa (Brazilian Portuguese) in
+Conversation on desktop or Read aloud settings on the phone. The choice is saved
+on that device. No API key or paid speech provider is required. Run the read-aloud command from
 [local voice setup](#local-voice-setup-on-the-computer) once on your computer
 (`python3.12 scripts/setup-local-voice.py read-aloud` on macOS) to install an
 isolated CPU environment and download the official model.

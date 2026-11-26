@@ -4,9 +4,11 @@ import { api } from '../desktop/client'
 import { entityHash } from '../lib/route'
 import type { WorkspaceEntity } from '../types'
 import type { CardTemplate } from '../../desktop/service/card-schema.mjs'
+import { useT } from '../lib/i18n'
 import '../styles/editable-cards.css'
 
 function NewCardDialog({ onClose }: { onClose: () => void }) {
+  const { t, serviceMessage } = useT()
   const dialog = useRef<HTMLDialogElement>(null)
   const [title, setTitle] = useState(''), [template, setTemplate] = useState<CardTemplate>('gallery')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
@@ -18,20 +20,21 @@ function NewCardDialog({ onClose }: { onClose: () => void }) {
       const { entity } = await api<{ entity: WorkspaceEntity }>('/workspace/cards', { title, template })
       window.dispatchEvent(new Event('mrmak-workspace-changed')); location.hash = entityHash(entity.id)
       onClose()
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false) }
+    } catch (error) { setError(serviceMessage(error instanceof Error ? error.message : String(error))); setBusy(false) }
   }
-  return createPortal(<dialog ref={dialog} className="new-card-dialog" aria-label="New Workspace card" onCancel={event => { event.preventDefault(); if (!busy) onClose() }} onKeyDown={event => event.stopPropagation()}><form onSubmit={event => { event.preventDefault(); void create() }}>
-    <div className="new-card-heading"><div><span>Create in Workspace</span><h2>A place for your next idea.</h2></div><button type="button" aria-label="Close new card" disabled={busy} onClick={onClose}>×</button></div>
-    <label>Card title<input autoFocus required maxLength={200} placeholder="Character references, tool research…" value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
-    <fieldset disabled={busy} className="new-card-templates"><legend>Choose a starting view</legend>{(['gallery', 'research'] as const).map(value => <label key={value} className={template === value ? 'selected' : ''}><input type="radio" name="template" value={value} checked={template === value} onChange={() => setTemplate(value)} /><strong>{value === 'gallery' ? 'Gallery' : 'Research'}</strong><span>{value === 'gallery' ? 'Images, reference notes and saved prompts.' : 'Findings, source links and decisions.'}</span></label>)}</fieldset>
-    <p className="new-card-hint">Edit it yourself or ask your agent to update it. You can switch views later.</p>
+  return createPortal(<dialog ref={dialog} className="new-card-dialog" aria-label={t('newCard.dialogAria')} onCancel={event => { event.preventDefault(); if (!busy) onClose() }} onKeyDown={event => event.stopPropagation()}><form onSubmit={event => { event.preventDefault(); void create() }}>
+    <div className="new-card-heading"><div><span>{t('newCard.eyebrow')}</span><h2>{t('newCard.heading')}</h2></div><button type="button" aria-label={t('newCard.close')} disabled={busy} onClick={onClose}>×</button></div>
+    <label>{t('newCard.titleLabel')}<input autoFocus required maxLength={200} placeholder={t('newCard.titlePlaceholder')} value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
+    <fieldset disabled={busy} className="new-card-templates"><legend>{t('newCard.viewLegend')}</legend>{(['gallery', 'research'] as const).map(value => <label key={value} className={template === value ? 'selected' : ''}><input type="radio" name="template" value={value} checked={template === value} onChange={() => setTemplate(value)} /><strong>{value === 'gallery' ? t('newCard.gallery') : t('newCard.research')}</strong><span>{value === 'gallery' ? t('newCard.galleryDesc') : t('newCard.researchDesc')}</span></label>)}</fieldset>
+    <p className="new-card-hint">{t('newCard.hint')}</p>
     {error && <p className="card-error" role="alert">{error}</p>}
-    <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="card-primary" disabled={busy || !title.trim()}>{busy ? 'Creating…' : 'Create card'}</button></footer>
+    <footer><button type="button" disabled={busy} onClick={onClose}>{t('common.cancel')}</button><button type="submit" className="card-primary" disabled={busy || !title.trim()}>{busy ? t('newCard.creating') : t('newCard.create')}</button></footer>
   </form></dialog>, document.body)
 }
 
 export default function NewCard() {
+  const { t } = useT()
   const [open, setOpen] = useState(false)
   const button = useRef<HTMLButtonElement>(null)
-  return <><button ref={button} className="new-card-button" onClick={() => setOpen(true)}>+ New card</button>{open && <NewCardDialog onClose={() => { setOpen(false); button.current?.focus() }} />}</>
+  return <><button ref={button} className="new-card-button" onClick={() => setOpen(true)}>{t('newCard.button')}</button>{open && <NewCardDialog onClose={() => { setOpen(false); button.current?.focus() }} />}</>
 }

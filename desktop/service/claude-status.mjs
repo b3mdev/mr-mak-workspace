@@ -25,11 +25,15 @@ function gitBash(env) {
   const git = resolveCommand('git', env);
   return !!git && [path.join(path.dirname(git), '..', 'bin', 'bash.exe'), path.join(path.dirname(git), '..', '..', 'bin', 'bash.exe'), path.join(path.dirname(git), 'bash.exe')].some(file => existsSync(file));
 }
-export function reporterCommand(file, { env = process.env, node = process.execPath, windows = isWindows, bash } = {}) {
+export function reporterCommand(file, { env = process.env, node = process.execPath, windows = isWindows, bash, cmd = false } = {}) {
   // The desktop app starts Node by an extended path (\\?\D:\...), which no shell reads.
   const parts = [node, reporter, file].map(value => value.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '').replaceAll('\\', '/'));
   if (parts.some(value => /["'`$\r\n]/.test(value))) return null;
   const [program, script, target] = parts;
+  if (windows && cmd) {
+    if (parts.some(value => /[%!^&|<>()]/.test(value))) return null;
+    return `call "${program.replaceAll('/', '\\')}" "${script.replaceAll('/', '\\')}" "${target.replaceAll('/', '\\')}"`;
+  }
   if (!/\s/.test(program)) return `${program} "${script}" "${target}"`;
   if (!windows || (bash ?? gitBash(env))) return `"${program}" "${script}" "${target}"`;
   return `& '${program}' '${script}' '${target}'`;
@@ -45,20 +49,36 @@ async function ownStatusLine(cwd, env) {
   return false;
 }
 
+const statusDirectory = (stateDir, agent) => agent === 'antigravity' ? path.join(stateDir, 'antigravity-status') : statusFolder(stateDir);
+
 // The --settings file for one chat, or null when the person has their own status line.
 export async function statusSettings(stateDir, session, env = process.env) {
-  if (session.agent !== 'claude' || await ownStatusLine(session.cwd, env)) return null;
-  const folder = statusFolder(stateDir);
+  const antigravity = session.agent === 'antigravity';
+  if (antigravity) {
+    const home = env.ANTIGRAVITY_HOME || path.join(os.homedir(), '.gemini', 'antigravity-cli');
+    const custom = await readJsonFile(path.join(home, 'settings.json'));
+    if (custom && Object.hasOwn(custom, 'statusLine')) return null;
+  } else if (session.agent !== 'claude' || await ownStatusLine(session.cwd, env)) return null;
+  const folder = statusDirectory(stateDir, session.agent);
   await mkdir(folder, { recursive: true });
-  const command = reporterCommand(path.join(folder, `${session.id}.json`), { env });
+  const command = reporterCommand(path.join(folder, `${session.id}.json`), { env, cmd: antigravity });
   if (!command) return null;
   const file = path.join(folder, `${session.id}.settings.json`);
-  await writeFile(file, JSON.stringify({ statusLine: { type: 'command', command } }, null, 2) + '\n');
+  const statusLine = { type: 'command', command, ...(antigravity && { stack_with_default: true }) };
+  // agy's Windows command runner escapes literal quotes before cmd sees them.
+  if (antigravity && isWindows) statusLine.command = 'call %BENTO_AGY_STATUS_REPORTER%';
+  await writeFile(file, JSON.stringify({ statusLine }, null, 2) + '\n');
   return file;
 }
 
-export async function readStatus(stateDir, sessionId) {
-  const folder = statusFolder(stateDir);
+export function antigravityStatusEnvironment(settings) {
+  if (!isWindows || !settings) return {};
+  const command = reporterCommand(settings.replace(/\.settings\.json$/, '.json'), { cmd: true });
+  return command ? { BENTO_AGY_STATUS_REPORTER: command.slice('call '.length) } : {};
+}
+
+export async function readStatus(stateDir, sessionId, agent = 'claude') {
+  const folder = statusDirectory(stateDir, agent);
   return { chat: await readJsonFile(path.join(folder, `${sessionId}.json`)) };
 }
 

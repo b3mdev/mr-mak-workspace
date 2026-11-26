@@ -4,6 +4,15 @@ html[data-theme-switching] *,html[data-theme-switching] *::before,html[data-them
 .workspace-theme-picker select{width:100%;border:1px solid var(--hairline-strong);border-radius:7px;background:var(--surface-solid);color:var(--text);padding:9px;font:12px var(--font-body)}
 .workspace-theme-picker p{font-size:11px;line-height:1.7;color:var(--text-dim)}
 .workspace-theme-picker [role=alert]{color:var(--red);margin-top:8px}
+.workspace-language-picker label{display:flex;flex-direction:column;gap:9px;font-size:12px;color:var(--text);margin:12px 0}
+.workspace-language-picker.compact label{margin:0 0 12px}
+.workspace-language-picker select{width:100%;border:1px solid var(--hairline-strong);border-radius:7px;background:var(--surface-solid);color:var(--text);padding:9px;font:12px var(--font-body)}
+.workspace-language-picker p{font-size:11px;line-height:1.7;color:var(--text-dim)}
+.workspace-language-picker [role=alert]{color:var(--red);margin-top:8px}
+.language-toggle{flex-shrink:0;padding:4px 8px;border:1px solid var(--hairline-strong);border-radius:7px;background:var(--surface-1);color:var(--text-dim);font:600 10px/1.2 var(--font-body);letter-spacing:.4px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.language-toggle:hover:not(:disabled){border-color:var(--pink);color:var(--text);background:var(--pink-dim)}
+.language-toggle:focus-visible{outline:2px solid var(--pink);outline-offset:2px}
+.language-toggle:disabled{opacity:.6;cursor:default}
 .topbar:has(.browser-settings){position:relative;z-index:35}
 .breadcrumb:has(.browser-settings){flex:1;width:100%}
 .browser-settings{position:relative;flex-shrink:0;margin-left:auto}

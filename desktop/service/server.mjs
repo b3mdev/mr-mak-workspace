@@ -5,15 +5,15 @@ import { watch } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { parse as parseEnv } from 'dotenv';
 import { Sessions } from './sessions.mjs';
-import { Coordinator, openChatArguments } from './coordinator.mjs';
+import { Coordinator, conversationOf, openChatArguments, revisionOf } from './coordinator.mjs';
 import { Files, serveFile } from './files.mjs';
 import { importFile, dragFiles, moveFile, recyclePath, MAX_FILE_BYTES } from './file-transfers.mjs';
 import { inventory } from './agents.mjs';
 import { Attachments, attachmentText, MAX_IMAGE_BYTES } from './attachments.mjs';
-import { ContextLibrary } from './context.mjs';
+import { ContextLibrary, localClock } from './context.mjs';
 import { groupLabel, taskTitle } from './titles.mjs';
 import { defaultWorkerEffort, taskEffort, workerEfforts } from './effort.mjs';
-import { Workspace, localDay, metadataPatch } from './workspace.mjs';
+import { Workspace, metadataPatch } from './workspace.mjs';
 import { CardDocuments } from './card-documents.mjs';
 import { QuickActions } from './quick-actions.mjs';
 import { defaultVoiceStyle, voiceSession } from './voice-profile.mjs';
@@ -38,11 +38,13 @@ import { rewindToMessage } from './message-edit.mjs';
 import { LocalReadAloud } from './local-read-aloud.mjs';
 import { Handoffs } from './handoff.mjs';
 import { chatCommands } from './chat-commands.mjs';
+import { usageReader } from './agent-usage.mjs';
 import { isThemePreference } from './appearance.mjs';
+import { defaultUiLanguage, isUiLanguage, resolveUiLanguage } from './language.mjs';
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -56,6 +58,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const integrations = await new IntegrationManager(stateDir).init();
   const mcp = new McpInventory(repo, mcpOptions);
   const sessions = await new Sessions(repo, stateDir).init();
+  const readUsage = usageReader(repo, stateDir, () => sessions.items.values(), codexUsageQuery);
   const transcripts = new ConversationTranscripts();
   const fileInsights = new FileInsights();
   const conversationMedia = new ConversationMedia();
@@ -63,7 +66,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const environment = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
   const settingsPath = path.join(stateDir, 'settings.json');
   const savedSettings = await readJson(settingsPath, null);
-  let settings = { defaultAgent: 'codex', defaultBypass: false, defaultEffort: defaultWorkerEffort, coordinatorModel: environment.MRMAK_COORDINATOR_MODEL?.trim() || null, terminalFontSize: 13, terminalAppearance: 'original', workspaceTheme: 'dark', coordinatorEffort: 'medium', voiceName: 'cedar', voiceStyle: defaultVoiceStyle, handoffAfter: 40, handoffAt: savedSettings?.handoffAfter === 0 ? 0 : 70, groupTabsByProject: false, projectOrder: [], systemEvents: 'compact', ...savedSettings };
+  let settings = { defaultAgent: 'codex', defaultBypass: false, defaultEffort: defaultWorkerEffort, coordinatorModel: environment.MRMAK_COORDINATOR_MODEL?.trim() || null, terminalFontSize: 13, terminalAppearance: 'original', workspaceTheme: 'dark', uiLanguage: defaultUiLanguage, coordinatorEffort: 'medium', voiceName: 'cedar', voiceStyle: defaultVoiceStyle, handoffAfter: 40, handoffAt: savedSettings?.handoffAfter === 0 ? 0 : 70, groupTabsByProject: false, projectOrder: [], systemEvents: 'compact', ...savedSettings };
+  settings.uiLanguage = resolveUiLanguage(settings.uiLanguage);
   if (settings.groupTabsByProject === true) {
     await sessions.groupByProject(settings.projectOrder);
     settings.groupTabsByProject = false;
@@ -79,6 +83,13 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     mobile?.broadcast({ type: 'dictation', dictation: info });
     return info;
   };
+  const chooseLanguage = async language => {
+    if (!isUiLanguage(language)) throw Object.assign(new Error('Choose a supported interface language.'), { status: 400 });
+    settings.uiLanguage = language; await saveSettings();
+    broadcast('settings', { settings });
+    mobile?.broadcast({ type: 'language', uiLanguage: settings.uiLanguage });
+    return { uiLanguage: settings.uiLanguage };
+  };
   const projectList = () => recentProjects({ repo, sessions: sessions.list(), pinned: settings.pinnedProjects || [] });
   let selectedId = sessions.active().some(item => item.id === settings.selectedId) ? settings.selectedId : sessions.active()[0]?.id || null;
   // Each launch starts at the project home. The current route only matters to
@@ -90,9 +101,13 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const saveSettings = () => { settingsSave = settingsSave.catch(() => {}).then(() => saveJson(settingsPath, settings)); return settingsSave; };
   const scheduleSettings = () => { clearTimeout(settingsTimer); settingsTimer = setTimeout(() => saveSettings().catch(() => {}), 500); };
   const transcriptPath = path.join(stateDir, 'voice-transcripts.json');
+  const conversationPath = path.join(stateDir, 'coordinator-conversation.json');
+  const savedConversation = await readJson(conversationPath, {});
+  let coordinatorConversation = { conversationId: conversationOf(savedConversation || {}), contextRevision: revisionOf(savedConversation || {}) };
   let voiceHistory = await readJson(transcriptPath, []);
   let transcriptSave = Promise.resolve();
   let voiceOwner = null;
+  let voiceConnection = null;
   let closing = false;
   const clients = new Set();
   let mobile;
@@ -124,8 +139,12 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     return { attached: verified, submitted: false };
   };
   const coordinator = await new Coordinator({
-    repo, stateDir, orientation: () => library.orientation(), settings: () => settings,
-    context: () => ({ repo, localDate: localDay(), selectedId, workspaceRoute, chats: sessions.active(), recentNotices: notices.slice(-5), recentRequests: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-6).map(({ text, result, status }) => ({ text, result, status })) }),
+    repo, stateDir, settings: () => settings,
+    context: revision => ({
+      workspace: repo, day: localClock(), workspaceRoute,
+      recentRequests: operations().filter(item => revisionOf(item) === revision && item.status === 'completed').slice(-2)
+        .map(({ text, result }) => ({ text: text?.slice(0, 400), result: result?.slice(0, 600) })),
+    }),
     execute: async (name, args, operationId, requestText) => {
       const latestRequest = requestText || coordinator.operations.get(operationId)?.text || '';
       if (['reopen_chat', 'send_to_chat', 'attach_files'].includes(name)) {
@@ -163,6 +182,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         }
         case 'preview_file': { const preview = await files.preview(args.path); show('workspace', { preview }); return { shown: preview.path }; }
         case 'list_files': return files.list(args.path || repo, 'all', args.query || '');
+        case 'get_local_context': return library.overview();
         case 'search_context': return knowledge.searchText(args.query);
         case 'read_context': return knowledge.read(args.path, args.offset);
         case 'list_skills': return knowledge.skills(args.query || '');
@@ -179,11 +199,31 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     },
   }).init();
   const quick = await new QuickActions({ stateDir, workspace, context: () => ({ chats: sessions.active(), route: workspaceRoute }), execute: (...args) => coordinator.execute(...args), completed: operation => broadcast('coordinator-result', { operation }) }).init();
+  const operations = () => [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => (a.at || '').localeCompare(b.at || ''));
+  const currentOperations = () => operations().filter(item => conversationOf(item) === coordinatorConversation.conversationId).slice(-30);
+  const currentVoiceHistory = () => voiceHistory.filter(item => conversationOf(item) === coordinatorConversation.conversationId);
+  const conversationState = () => ({ coordinatorConversation, operations: currentOperations(), voiceHistory: currentVoiceHistory(), voiceOwner, state: coordinator.state });
+  const releaseVoice = () => {
+    voiceConnection?.abort(); voiceConnection = null;
+    if (voiceOwner) { voiceOwner = null; broadcast('voice-owner', { owner: null }); }
+  };
+  const checkRevision = data => {
+    if (data.contextRevision !== undefined && data.contextRevision !== coordinatorConversation.contextRevision) {
+      throw Object.assign(new Error('The coordinator context changed. Send the request again if needed.'), { status: 409 });
+    }
+  };
   const askMak = async data => {
-    if (coordinator.operationPromises.has(data.id) || coordinator.operations.has(data.id)) return coordinator.ask(data);
+    checkRevision(data);
+    const request = { ...data, ...coordinatorConversation };
+    const signal = coordinator.run.signal;
+    if (coordinator.operationPromises.has(data.id) || coordinator.operations.has(data.id)) return coordinator.ask(request);
     const images = await attachments.coordinatorImages(data.images);
-    if (images.length) return coordinator.ask({ ...data, images });
-    return await quick.ask(data) || coordinator.ask({ ...data, images });
+    signal.throwIfAborted();
+    if (images.length) return coordinator.ask({ ...request, images });
+    const result = await quick.ask(request, signal);
+    if (result) return result;
+    signal.throwIfAborted();
+    return coordinator.ask({ ...request, images });
   };
   coordinator.on('state', state => broadcast('coordinator-state', { state }));
   coordinator.on('result', operation => broadcast('coordinator-result', { operation }));
@@ -257,10 +297,12 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'POST' && url.pathname === '/api/network/disconnect') return json(response, 200, await network.disconnect());
         if (method === 'GET' && url.pathname === '/api/bootstrap') {
           const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
-          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-30) });
+          const { operations, voiceHistory } = conversationState();
+          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, coordinatorConversation, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations });
         }
         if (method === 'GET' && url.pathname === '/api/workspace') return json(response, 200, await registry());
         if (method === 'GET' && url.pathname === '/api/workspace/projects') return json(response, 200, await loadGallery());
+        if (method === 'GET' && url.pathname === '/api/workspace/agent-usage') return json(response, 200, await readUsage());
         if (method === 'POST' && url.pathname === '/api/workspace/cards') return json(response, 201, await cards.create(data));
         const cardDocument = /^\/api\/workspace\/cards\/([^/]+)\/(\d+)$/.exec(url.pathname);
         if (cardDocument && method === 'GET') return json(response, 200, await cards.read(decodeURIComponent(cardDocument[1]), Number(cardDocument[2])));
@@ -350,11 +392,15 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
           if (['full', 'compact', 'hidden'].includes(data.systemEvents)) settings.systemEvents = data.systemEvents;
           if (isThemePreference(data.workspaceTheme)) settings.workspaceTheme = data.workspaceTheme;
           if (isThemePreference(data.chatTheme)) settings.chatTheme = data.chatTheme;
+          let languageChanged = false;
+          if (isUiLanguage(data.uiLanguage) && data.uiLanguage !== settings.uiLanguage) { settings.uiLanguage = data.uiLanguage; languageChanged = true; }
           if (['medium', 'high'].includes(data.coordinatorEffort)) settings.coordinatorEffort = data.coordinatorEffort;
           if (['cedar', 'marin'].includes(data.voiceName)) settings.voiceName = data.voiceName;
           if (data.groupColors && typeof data.groupColors === 'object' && !Array.isArray(data.groupColors)) settings.groupColors = Object.fromEntries(Object.entries(data.groupColors).filter(([name, value]) => name.length <= 60 && typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)).slice(0, 200).map(([name, value]) => [name, value.toLowerCase()]));
           if (Array.isArray(data.collapsedGroups)) settings.collapsedGroups = [...new Set(data.collapsedGroups.filter(item => typeof item === 'string' && item.length <= 60))].slice(0, 200);
-          await saveSettings(); broadcast('settings', { settings }); return json(response, 200, settings);
+          await saveSettings(); broadcast('settings', { settings });
+          if (languageChanged) mobile?.broadcast({ type: 'language', uiLanguage: settings.uiLanguage });
+          return json(response, 200, settings);
         }
         if (method === 'POST' && url.pathname === '/api/sessions') { const session = await sessions.create({ ...data, bypass: data.bypass ?? settings.defaultBypass, effort: data.effort ?? settings.defaultEffort }); await integrations.publish('session', { event: 'started', session }); focus(session.id); return json(response, 201, session); }
         if (method === 'POST' && url.pathname === '/api/groups/by-project') return json(response, 200, await sessions.toggleProjectGroups());
@@ -440,36 +486,59 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         }
         if (method === 'POST' && url.pathname === '/api/coordinator') return json(response, 200, await askMak(data));
         if (method === 'POST' && url.pathname === '/api/coordinator/prepare') { await coordinator.start(); return json(response, 200, { ready: true, model: coordinator.model }); }
+        if (method === 'GET' && url.pathname === '/api/coordinator/context') return json(response, 200, await library.overview({ excerpts: true }));
+        if (method === 'POST' && url.pathname === '/api/coordinator/conversation') {
+          checkRevision(data);
+          if (!['stop', 'reset', 'new'].includes(data.action)) throw new Error('Choose a coordinator conversation action.');
+          coordinator.cancel();
+          if (data.action !== 'stop') {
+            const contextRevision = coordinatorConversation.contextRevision + 1;
+            coordinatorConversation = { contextRevision, conversationId: data.action === 'new' ? contextRevision : coordinatorConversation.conversationId };
+            releaseVoice();
+            broadcast('coordinator-conversation', conversationState());
+            await saveJson(conversationPath, coordinatorConversation);
+          } else broadcast('coordinator-stopped', {});
+          return json(response, 200, conversationState());
+        }
         if (method === 'POST' && url.pathname === '/api/live/transcript') {
           if (typeof data.id !== 'string' || data.id.length > 200 || !Array.isArray(data.captions)) throw new Error('A voice session and captions are required.');
           const captions = data.captions.slice(-50).filter(item => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string').map(item => ({ role: item.role, text: item.text.slice(0, 1000), start: Number(item.start) || 0, end: Number(item.end) || 0 }));
-          const transcript = { id: data.id, at: new Date().toISOString(), captions };
-          voiceHistory = [...voiceHistory.filter(item => item.id !== data.id), transcript].slice(-12);
+          const conversationId = Number.isSafeInteger(data.conversationId) ? data.conversationId : coordinatorConversation.conversationId;
+          const transcript = { id: data.id, conversationId, at: new Date().toISOString(), captions };
+          voiceHistory = [...voiceHistory.filter(item => item.id !== data.id || conversationOf(item) !== conversationId), transcript].slice(-12);
+          if (conversationId === coordinatorConversation.conversationId) broadcast('voice-history', { voiceHistory: currentVoiceHistory() });
           const snapshot = voiceHistory;
           transcriptSave = transcriptSave.catch(() => {}).then(() => saveJson(transcriptPath, snapshot)); await transcriptSave;
           return json(response, 200, { saved: true });
         }
         if (method === 'POST' && url.pathname === '/api/live/release') {
-          if (voiceOwner?.clientId === data.clientId) { voiceOwner = null; broadcast('voice-owner', { owner: null }); }
+          if (voiceOwner?.clientId === data.clientId && voiceConnection?.id === data.connectionId) releaseVoice();
           return json(response, 200, { released: true });
         }
         if (method === 'POST' && url.pathname === '/api/live/session') {
+          checkRevision(data);
           if (voiceOwner && voiceOwner.clientId !== data.clientId) throw new Error(`Voice is already active in the ${voiceOwner.surface} window`);
           if (typeof data.sdp !== 'string' || !data.sdp.trim() || typeof data.clientId !== 'string') throw new Error('A microphone connection is required');
-          const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
-          const key = keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY;
-          if (!key) throw new Error('Add OPENAI_API_KEY to the repository .env, then press the nose again.');
+          voiceConnection?.abort();
+          const connection = new AbortController();
+          connection.id = data.connectionId;
+          voiceConnection = connection;
           voiceOwner = { clientId: data.clientId, surface: data.surface === 'chats' ? 'chats' : 'workspace' };
           broadcast('voice-owner', { owner: voiceOwner });
           try {
+            const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
+            connection.signal.throwIfAborted();
+            const key = keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY;
+            if (!key) throw new Error('Add OPENAI_API_KEY to the repository .env, then press the nose again.');
             const result = await fetch('https://api.openai.com/v1/live/sessions', {
-              method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(30000),
+              method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, signal: AbortSignal.any([connection.signal, AbortSignal.timeout(30000)]),
                 body: JSON.stringify({ session: voiceSession(settings), transport: { type: 'webrtc', sdp: data.sdp } }),
             });
             const value = await result.json().catch(() => ({}));
+            connection.signal.throwIfAborted();
             if (!result.ok) throw new Error(`OpenAI Live (${result.status}): ${value.error?.message || 'Session could not be started'}`);
             return json(response, 201, value);
-          } catch (error) { voiceOwner = null; broadcast('voice-owner', { owner: null }); throw error; }
+          } catch (error) { if (voiceConnection === connection) releaseVoice(); throw error; }
         }
         throw Object.assign(new Error('Endpoint not found'), { status: 404 });
       }
@@ -486,7 +555,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const origin = await listen(server);
   files.uiOrigin = origin;
   const network = await new DeviceNetwork({ stateDir: networkStateDir || stateDir, sessions, relay: mobileOptions?.networkRelay, getOrigin: () => mobile?.active ? mobile.origin : '' }).init();
-  mobile = await new MobileGateway({ ...mobileOptions, network, transcripts, readAloud, dictation, chooseDictation, repo, uiDir, stateDir, sessions, attachments, closeChat, settings: () => settings, changed: state => broadcast('mobile-state', { mobile: state }) }).init();
+  mobile = await new MobileGateway({ ...mobileOptions, network, transcripts, readAloud, dictation, chooseDictation, chooseLanguage, repo, uiDir, stateDir, sessions, attachments, closeChat, settings: () => settings, changed: state => broadcast('mobile-state', { mobile: state }) }).init();
   const wss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024 });
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, origin);
@@ -502,7 +571,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (!ws.authenticated) {
           if (message.type !== 'auth' || !equalSecret(message.token, token)) return ws.close(1008, 'Authentication failed');
           ws.authenticated = true; ws.clientId = message.clientId; ws.surface = message.surface; clients.add(ws); clearTimeout(authTimer);
-          send(ws, 'connected', { sessions: sessions.list(), selectedId, coordinator: coordinator.state }); return;
+          send(ws, 'connected', { sessions: sessions.list(), selectedId, ...conversationState() }); return;
         }
         if (message.type === 'subscribe') {
           ws.sessionId = message.id;
@@ -516,7 +585,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         else if (message.type === 'ping') send(ws, 'pong', {});
       } catch (error) { send(ws, 'service-error', { error: publicError(error) }); }
     });
-    ws.on('close', () => { clearTimeout(authTimer); clients.delete(ws); if (voiceOwner?.clientId === ws.clientId) { voiceOwner = null; broadcast('voice-owner', { owner: null }); } });
+    ws.on('close', () => { clearTimeout(authTimer); clients.delete(ws); if (voiceOwner?.clientId === ws.clientId && ![...clients].some(client => client.clientId === ws.clientId)) releaseVoice(); });
     ws.on('error', () => {});
   });
   let watcher;
@@ -528,7 +597,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
       nativeMessage: event => nativeSettings.receive(event),
       async close() {
         if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
-      watcher?.close(); clearTimeout(restoreTimer); coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
+      watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
       dictation.close(); await network.close(); await mobile.close();
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();

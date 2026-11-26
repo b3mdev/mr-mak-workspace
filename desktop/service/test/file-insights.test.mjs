@@ -55,7 +55,7 @@ test('reads Git state and diffs without running repository hooks or changing the
     const big = await insights.diff(path.join(repo, 'big.txt'));
     assert.equal(big.truncated, true);
     assert.equal(big.text.length, 1024 * 1024);
-  } finally { await rm(repo, { recursive: true, force: true }); }
+  } finally { await rm(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test('maps folder sizes within limits', async () => {

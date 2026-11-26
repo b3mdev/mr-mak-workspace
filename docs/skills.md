@@ -1,6 +1,6 @@
 # Project skills
 
-Twenty skills live in this project. `.agents/skills` is the maintained source
+Twenty-one skills live in this project. `.agents/skills` is the maintained source
 for Codex; `.claude/skills` contains complete, identical copies for Claude Code,
 including scripts and references. Both Skills sections open the full instructions.
 These are local project files, not global installations.
@@ -30,6 +30,7 @@ maintained source. `npm run test:template` checks that the two copies agree.
 | [higgsfield-workflow](../.agents/skills/higgsfield-workflow/SKILL.md) | Use the official Higgsfield CLI or its Blender integration to discover models, generate requested assets and resume recorded jobs. |
 | [image-reference-workflow](../.agents/skills/image-reference-workflow/SKILL.md) | Explore image concepts and make faithful edits of accepted references for 3D or creative production, with explicit model choices and visual review. |
 | [img2threejs](../.agents/skills/img2threejs/SKILL.md) | Turn an object or character reference image into a quality-gated, animation-ready procedural Three.js model built in code. Use for image-to-3D reconstruction, detail-accurate object rebuilds, stylized/likeness-maximized human characters, sculpt specs, and staged code generation. |
+| [local-context](../.agents/skills/local-context/SKILL.md) | Consult the current computer, local day, and Workspace context files on demand. |
 | [materials-to-game](../.agents/skills/materials-to-game/SKILL.md) | Create or apply material maps and bake a textured high-poly mesh onto a game mesh, with channel, UV and export checks. |
 | [motion-reference-workflow](../.agents/skills/motion-reference-workflow/SKILL.md) | Prepare and select character motion references, or transfer approved motion to a human reference for a later mocap workflow. |
 | [plan](../.agents/skills/plan/SKILL.md) | Turn a broad project request into a small actionable plan with concrete deliverables, dependencies and acceptance checks. |

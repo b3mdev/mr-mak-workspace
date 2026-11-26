@@ -38,7 +38,7 @@ async function fixture(t) {
     await gateway.approve(pending.id);
     return { ...(await request('/pair/finish', pending)), pending, token };
   };
-  return { gateway, request, pair, repo, writes, id, session, closed };
+  return { gateway, request, pair, repo, writes, id, session, sessions, closed };
 }
 
 test('pairing throttles each source independently and invalidates repeatedly guessed codes', async t => {
@@ -198,11 +198,11 @@ test('retries and parallel requests write one prompt; changed payload cannot reu
 });
 
 test('uncertain terminal delivery is retained and never automatically repeated', async t => {
-  const { request, pair, id, writes, session } = await fixture(t), device = await pair();
+  const { request, pair, id, writes, session, sessions } = await fixture(t), device = await pair();
   const original = session.process, data = { requestId: randomUUID(), text: 'Do this once' };
-  const pending = request(`/sessions/${id}/send`, data, device.cookie);
-  const timer = setTimeout(() => { session.process = {}; }, 100);
-  const first = await pending; clearTimeout(timer);
+  const write = sessions.input;
+  sessions.input = (...args) => { write(...args); session.process = {}; };
+  const first = await request(`/sessions/${id}/send`, data, device.cookie);
   assert.equal(first.data.status, 'uncertain'); assert.equal(writes.length, 1);
   session.process = original;
   assert.equal((await request(`/sessions/${id}/send`, data, device.cookie)).data.status, 'uncertain');

@@ -8,13 +8,23 @@ with contextlib.redirect_stdout(sys.stderr):
     options = rt.SessionOptions(); options.intra_op_num_threads = 4
     session = rt.InferenceSession(str(root / 'kokoro-v1.0.int8.onnx'), sess_options=options, providers=['CPUExecutionProvider'])
     engine = Kokoro.from_session(session, str(root / 'voices-v1.0.bin'))
+voice_languages = {
+    'am_michael': 'en-us',
+    'bf_emma': 'en-gb',
+    'pf_dora': 'pt-br',
+    'pm_alex': 'pt-br',
+    'pm_santa': 'pt-br',
+}
+
 for line in sys.stdin:
     try:
         request = json.loads(line)
         voice = request['voice']
-        if voice not in ('am_michael', 'bf_emma') or not isinstance(request['text'], str) or not 0 < len(request['text']) <= 2000: raise ValueError()
+        text = request['text']
+        if voice not in voice_languages or not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            raise ValueError()
         with contextlib.redirect_stdout(sys.stderr):
-            samples, rate = engine.create(request['text'], voice=voice, lang='en-us' if voice == 'am_michael' else 'en-gb')
+            samples, rate = engine.create(text, voice=voice, lang=voice_languages[voice])
         audio = io.BytesIO()
         with wave.open(audio, 'wb') as wav:
             wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(rate)

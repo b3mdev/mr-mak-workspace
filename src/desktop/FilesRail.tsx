@@ -9,17 +9,29 @@ import NetworkPanel from './NetworkPanel'
 import McpPanel from './McpPanel'
 import { ZoomImage } from '../components/ImagePreview'
 import ReportFrame, { REPORT_SANDBOX } from '../components/ReportFrame'
-import { fileManager, isMac, trashName } from './platform'
+import { isMac } from './platform'
 import { gitMark, showDiff, showMap, useAgentFiles, useFollow, useGitStatus, type GitFile } from './fileInsights'
 import { DiffView, FolderMap } from './FileExtras'
+import { localizeFileManager, localizeTrashName, useT, type MessageKey } from '../lib/i18n'
+
+const gitStatusKeys: Record<GitFile['status'], MessageKey> = {
+  modified: 'files.git.modified',
+  added: 'files.git.added',
+  deleted: 'files.git.deleted',
+  renamed: 'files.git.renamed',
+  untracked: 'files.git.untracked',
+  conflict: 'files.git.conflict',
+}
 
 export function FilePreview({ file }: { file: Preview }) {
+  const { lang, t, number } = useT()
+  const manager = localizeFileManager(lang)
   // A format the webview cannot play (ProRes, HEIC before Safari 17, odd codecs) falls back to the desktop-app card.
   const [failed, setFailed] = useState('')
   const kind = file.url && failed === file.url ? 'unsupported' : file.kind
-  const reason = kind === file.kind ? file.reason : 'Open this file in its desktop application.'
+  const reason = kind === file.kind ? file.reason : t('files.openInDesktopApp')
   const fail = () => setFailed(file.url || '')
-  return <div className="file-preview"><header><span><Icon name="files" size={16} /><strong title={file.name}>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB</small></span><div><button className="desk-icon" onClick={() => api('/reveal', { path: file.path }).catch(reportError)} title={`Show in ${fileManager}`}><Icon name="external" size={17} /></button><button className="desk-icon" onClick={() => setPreview(null)} title="Back to Workspace" aria-label="Close file preview"><Icon name="close" size={18} /></button></div></header><div className={`file-preview-body ${kind}`}>
+  return <div className="file-preview"><header><span><Icon name="files" size={16} /><strong title={file.name}>{file.name}</strong><small>{number(Math.max(1, Math.round(file.size / 1024)))} KB</small></span><div><button className="desk-icon" onClick={() => api('/reveal', { path: file.path }).catch(reportError)} title={t('files.showInManager', { manager })}><Icon name="external" size={17} /></button><button className="desk-icon" onClick={() => setPreview(null)} title={t('report.backToWorkspace')} aria-label={t('files.closePreview')}><Icon name="close" size={18} /></button></div></header><div className={`file-preview-body ${kind}`}>
     {file.kind === 'diff' && <DiffView text={file.text || ''} />}
     {file.kind === 'map' && file.map && <FolderMap map={file.map} />}
     {file.kind === 'text' && (/\.md$/i.test(file.name) ? <MarkdownDocument key={`${file.path}:${file.revision}`} file={file} /> : <pre>{file.text}</pre>)}
@@ -27,7 +39,7 @@ export function FilePreview({ file }: { file: Preview }) {
     {kind === 'image' && <ZoomImage src={file.url} alt={file.name} onError={fail} />}
     {kind === 'video' && <video src={file.url} controls onError={fail} />}
     {kind === 'audio' && <audio src={file.url} controls onError={fail} />}
-    {kind === 'unsupported' && <div className="file-unsupported"><Icon name="files" size={38} /><h2>{file.name}</h2><p>{reason}</p><button className="desk-secondary" onClick={() => api('/reveal', { path: file.path }).catch(reportError)}>Show in {fileManager}</button></div>}
+    {kind === 'unsupported' && <div className="file-unsupported"><Icon name="files" size={38} /><h2>{file.name}</h2><p>{reason}</p><button className="desk-secondary" onClick={() => api('/reveal', { path: file.path }).catch(reportError)}>{t('files.showInManager', { manager })}</button></div>}
   </div></div>
 }
 
@@ -38,7 +50,9 @@ const fileName = (path: string) => path.replace(isMac ? /\/$/ : /[\\/]$/, '').sp
 const parentPath = (path: string) => path.replace(isMac ? /\/[^/]+$/ : /[\\/][^\\/]+$/, '')
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 function RevealFolder({ path, name }: { path: string; name: string }) {
-  return <button className="file-reveal" title={`Show ${name} in ${fileManager}`} aria-label={`Show ${name} in ${fileManager}`} onClick={event => { event.stopPropagation(); api('/reveal', { path }).catch(reportError) }}><Icon name="external" size={14} /></button>
+  const { lang, t } = useT()
+  const label = t('files.showNamedInManager', { name, manager: localizeFileManager(lang) })
+  return <button className="file-reveal" title={label} aria-label={label} onClick={event => { event.stopPropagation(); api('/reveal', { path }).catch(reportError) }}><Icon name="external" size={14} /></button>
 }
 function RowAction({ label, text, onClick }: { label: string; text: string; onClick: () => void }) {
   return <button className="file-reveal file-action" title={label} aria-label={label} onClick={event => { event.stopPropagation(); onClick() }}>{text}</button>
@@ -62,6 +76,8 @@ type TreeControls = {
 function FolderBranch({ path, mode = 'all', depth = 1, ancestors = [], tree, onLoad }: {
   path: string; mode?: 'main' | 'all'; depth?: number; ancestors?: string[]; tree: TreeControls; onLoad?: (folder: Folder) => void
 }) {
+  const { lang, t, serviceMessage } = useT()
+  const manager = localizeFileManager(lang)
   const [folder, setFolder] = useState<Folder | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -71,41 +87,42 @@ function FolderBranch({ path, mode = 'all', depth = 1, ancestors = [], tree, onL
     }).catch(error => { if (!abort.signal.aborted) setError(message(error)) })
     return () => abort.abort()
   }, [path, mode, tree.revision, onLoad])
-  if (error) return <p className="file-tree-note desk-error-inline">{error}</p>
-  if (!folder) return <p className="file-tree-note">Loading folder…</p>
-  if (ancestors.includes(pathKey(folder.path))) return <p className="file-tree-note">Linked folder already shown above.</p>
-  if (depth > 20) return <button className="file-tree-note" onClick={() => api('/reveal', { path }).catch(reportError)}>Open this deep folder in {fileManager}</button>
+  if (error) return <p className="file-tree-note desk-error-inline">{serviceMessage(error)}</p>
+  if (!folder) return <p className="file-tree-note">{t('files.loadingFolder')}</p>
+  if (ancestors.includes(pathKey(folder.path))) return <p className="file-tree-note">{t('files.linkedAlreadyShown')}</p>
+  if (depth > 20) return <button className="file-tree-note" onClick={() => api('/reveal', { path }).catch(reportError)}>{t('files.openDeepFolder', { manager })}</button>
   const entries = folder.entries.filter(entry => entry.directory || entry.name.normalize('NFC').toLowerCase().includes(tree.query.normalize('NFC').toLowerCase()))
   return <div role="group" className="file-group" style={{ ['--guide' as string]: `${indent(depth) + 4}px` }} {...tree.dropProps(folder.path)}>{entries.map(entry => {
     const expanded = tree.expanded.has(pathKey(entry.path))
     const git = entry.directory ? undefined : tree.git.lookup(entry.path), changed = entry.directory && tree.git.changedFolder(entry.path)
+    const gitStatusLabel = git ? t(gitStatusKeys[git.status]) : ''
     const agent = tree.touched.get(pathKey(entry.path))
     const actions = entry.directory ? 2 : git && git.status !== 'deleted' ? 1 : 0
     return <div role="none" key={entry.path}>
       <div role="none" className={`file-entry ${actions ? 'has-reveal' : ''}`} style={actions ? { ['--actions' as string]: `${actions * 28 + 4}px` } : undefined} {...(entry.directory ? tree.dropProps(entry.path) : {})}>
       <button role="treeitem" data-path={entry.path} aria-level={depth + 1} aria-expanded={entry.directory ? expanded : undefined} aria-selected={pathKey(tree.selected) === pathKey(entry.path)}
         className={`file-row ${entry.directory ? 'directory' : ''} ${pathKey(tree.selected) === pathKey(entry.path) ? 'selected' : ''} ${tree.dropTarget === pathKey(entry.path) ? 'drop-target' : ''} ${git ? `git-${git.status}` : changed ? 'git-folder' : ''} ${agent ? `agent-${agent.kind} ${agent.recent ? 'agent-recent' : ''}` : ''}`}
-        style={{ paddingLeft: indent(depth) }} title={[entry.path, git && `Git: ${git.status}${git.staged ? ' (staged)' : ''}`, agent && `Agent ${agent.kind === 'write' ? 'wrote' : 'read'} this file`].filter(Boolean).join('\n')}
+        style={{ paddingLeft: indent(depth) }} title={[entry.path, git && `${t('files.gitStatus', { status: gitStatusLabel })}${git.staged ? t('files.gitStaged') : ''}`, agent && t(agent.kind === 'write' ? 'files.agentWrote' : 'files.agentRead')].filter(Boolean).join('\n')}
         onClick={() => entry.directory ? tree.toggle(entry.path) : tree.preview(entry)}
         draggable onDragStart={event => tree.drag(event, entry.path, entry.directory)}
         {...tree.dropProps(entry.directory ? entry.path : folder.path)}>
         <Icon name="arrow" size={11} style={{ visibility: entry.directory ? 'visible' : 'hidden', transform: expanded ? 'rotate(90deg)' : undefined }} />
         <Icon name={entry.directory ? 'folder' : 'files'} size={15} /><span>{entry.name}</span>
-        {changed && <i className="file-git-dot" aria-label="Has changes" />}
+        {changed && <i className="file-git-dot" aria-label={t('files.hasChanges')} />}
         {git && lines(git) && <small className="file-lines">{lines(git)}</small>}
         {!entry.directory && !git && <small>{entry.size < 1024 * 1024 ? `${Math.max(1, Math.round(entry.size / 1024))}k` : `${(entry.size / (1024 * 1024)).toFixed(1)}m`}</small>}
-        {git && <b className={`file-git-mark ${git.status}`} aria-label={`Git: ${git.status}`}>{gitMark[git.status]}</b>}
+        {git && <b className={`file-git-mark ${git.status}`} aria-label={t('files.gitStatus', { status: gitStatusLabel })}>{gitMark[git.status]}</b>}
       </button>
       {actions > 0 && <div className="file-actions">
-        {entry.directory && <RowAction label={`Size map of ${entry.name}`} text="▦" onClick={() => void showMap(entry.path)} />}
+        {entry.directory && <RowAction label={t('files.sizeMapOf', { name: entry.name })} text="▦" onClick={() => void showMap(entry.path)} />}
         {entry.directory && <RevealFolder path={entry.path} name={entry.name} />}
-        {!entry.directory && <RowAction label={`Diff of ${entry.name}`} text="±" onClick={() => void showDiff(entry.path)} />}
+        {!entry.directory && <RowAction label={t('files.diffOf', { name: entry.name })} text="±" onClick={() => void showDiff(entry.path)} />}
       </div>}
       </div>
       {entry.directory && expanded && <FolderBranch path={entry.path} depth={depth + 1} ancestors={[...ancestors, pathKey(folder.path)]} tree={tree} />}
     </div>
-  })}{!entries.length && <p className="file-tree-note" style={{ paddingLeft: indent(depth) + 14 }}>{tree.query ? 'No matching files.' : 'Empty folder · drop files here'}</p>}
-    {folder.truncated && <p className="file-tree-note">First 1,500 entries shown. Open {fileManager} for the complete folder.</p>}
+  })}{!entries.length && <p className="file-tree-note" style={{ paddingLeft: indent(depth) + 14 }}>{tree.query ? t('files.noMatchingFiles') : t('files.emptyFolderHint')}</p>}
+    {folder.truncated && <p className="file-tree-note">{t('files.truncated', { manager })}</p>}
   </div>
 }
 
@@ -126,11 +143,30 @@ function treeKeys(event: KeyboardEvent<HTMLDivElement>) {
   rows[Math.max(0, Math.min(rows.length - 1, next))]?.focus()
 }
 
+type RailPanel = 'files' | 'skills' | 'mcp' | 'network' | 'settings'
+const railTitleKey: Record<RailPanel, MessageKey> = {
+  files: 'files.titleFiles',
+  skills: 'files.titleSkills',
+  mcp: 'files.titleMcp',
+  network: 'network.title',
+  settings: 'files.titleSettings',
+}
+const railLabelKey: Record<RailPanel, MessageKey> = {
+  files: 'files.railFiles',
+  skills: 'files.railSkills',
+  mcp: 'files.railMcp',
+  network: 'network.railLabel',
+  settings: 'files.railSettings',
+}
+
 export default function FilesRail() {
+  const { lang, t, serviceMessage } = useT()
+  const manager = localizeFileManager(lang)
+  const trash = localizeTrashName(lang)
   const { repo, selectedId, sessions } = useDesktop()
   const storageKey = `mrmak.files.${pathKey(repo)}`
   const [open, setOpen] = useState(() => localStorage.getItem(`${storageKey}.open`) === 'true')
-  const [panel, setPanel] = useState<'files' | 'skills' | 'mcp' | 'network' | 'settings'>('files')
+  const [panel, setPanel] = useState<RailPanel>('files')
   const [root, setRoot] = useState(repo)
   const [typedPath, setTypedPath] = useState(repo)
   const [rootFolder, setRootFolder] = useState<Folder | null>(null)
@@ -180,7 +216,7 @@ export default function FilesRail() {
       const gesture = internalDrag.current
       window.setTimeout(() => {
         if (internalDrag.current !== gesture) return
-        if (!gesture?.handled) setStatus(result.dropped ? 'Path handed to the destination.' : '')
+        if (!gesture?.handled) setStatus(result.dropped ? t('files.pathHanded') : '')
         internalDrag.current = null
       }, 150)
     }
@@ -188,7 +224,7 @@ export default function FilesRail() {
       const result = (event as CustomEvent<{ path: string; recycled: boolean; error?: string }>).detail
       recycleLock.current = false
       if (result.error) { setError(result.error); setStatus(''); return }
-      setStatus(`${fileName(result.path)} moved to ${trashName}.`)
+      setStatus(t('files.movedToTrash', { name: fileName(result.path), trash }))
       const preview = desktopState().preview
       if (preview && (pathKey(preview.path) === pathKey(result.path) || pathKey(preview.path).startsWith(pathKey(result.path) + '/'))) setPreview(null)
       const parent = parentPath(result.path)
@@ -197,9 +233,9 @@ export default function FilesRail() {
     window.addEventListener('mrmak-native-drag-result', complete)
     window.addEventListener('mrmak-recycle-result', recycled)
     return () => { window.removeEventListener('mrmak-native-drag-result', complete); window.removeEventListener('mrmak-recycle-result', recycled) }
-  }, [refresh])
+  }, [refresh, t, trash])
   const navigate = (path: string) => { setRoot(path); setTypedPath(path); setSelected(path); setDestination(path); if (pathKey(path) !== pathKey(root)) setRootFolder(null); setQuery(''); setError('') }
-  const showPanel = (next: typeof panel) => {
+  const showPanel = (next: RailPanel) => {
     if (open && panel === next) { setOpen(false); return }
     if (next === 'skills') { setMode('all'); navigate(`${repo}/.claude/skills`) }
     if (next === 'files' && panel !== 'files') { setMode('main'); navigate(repo) }
@@ -211,49 +247,54 @@ export default function FilesRail() {
   }
   const copy = useCallback(async (files: File[], folder: string) => {
     if (copyLock.current || !files.length) return
-    if (files.length > 100) { setError('Copy up to 100 files at a time.'); return }
-    if (files.some(file => file.size > 1024 * 1024 * 1024)) { setError('Choose files of 1 GB or less.'); return }
+    if (files.length > 100) { setError(t('files.maxFilesCopy')); return }
+    if (files.some(file => file.size > 1024 * 1024 * 1024)) { setError(t('files.maxFileSize')); return }
     copyLock.current = true; setCopying(true); setError(''); setDropTarget('')
     let count = 0, renamed = 0
     try {
       for (const file of files) {
-        setStatus(`Copying ${count + 1} of ${files.length} to ${fileName(folder)}…`)
+        setStatus(t('files.copyingProgress', { current: count + 1, total: files.length, folder: fileName(folder) }))
         const result = await uploadFile(file, folder)
         count++; if (result.renamed) renamed++
       }
-      setStatus(`Copied ${count} ${count === 1 ? 'file' : 'files'} to ${fileName(folder)}.${renamed ? ' Existing files kept; copies renamed.' : ''}`)
-    } catch (error) { setError(message(error)); setStatus(count ? `Copied ${count} of ${files.length} files before the error.` : '') }
+      setStatus(t('files.copiedFiles', {
+        count,
+        noun: count === 1 ? t('files.fileOne') : t('files.fileMany'),
+        folder: fileName(folder),
+        renamedNote: renamed ? t('files.renamedNote') : '',
+      }))
+    } catch (error) { setError(message(error)); setStatus(count ? t('files.copiedBeforeError', { count, total: files.length }) : '') }
     finally {
       copyLock.current = false; setCopying(false); setSelected(folder); setDestination(folder)
       setExpanded(current => new Set([...current, pathKey(folder)])); refresh()
     }
-  }, [refresh])
+  }, [refresh, t])
   const dropFiles = useCallback(async (event: DragEvent, folder: string) => {
     event.preventDefault(); event.stopPropagation(); setDropTarget('')
     const gesture = internalDrag.current
     if (gesture) {
       gesture.handled = true
-      if (gesture.directory) { setStatus(''); setError(`Drop folders into Chats to insert their paths. Use ${fileManager} to move folders.`); return }
+      if (gesture.directory) { setStatus(''); setError(t('files.dropFoldersError', { manager })); return }
       if (copyLock.current) return
       copyLock.current = true; setCopying(true); setError('')
       try {
         const result = await api<{ path: string; moved: boolean }>('/files/move', { path: gesture.path, folder })
-        setStatus(result.moved ? `Moved ${fileName(result.path)} to ${fileName(folder)}.` : '')
+        setStatus(result.moved ? t('files.movedFile', { name: fileName(result.path), folder: fileName(folder) }) : '')
         if (result.moved) { setSelected(result.path); setDestination(folder); setExpanded(current => new Set([...current, pathKey(folder)])) }
       } catch (error) { setError(message(error)); setStatus('') }
       finally { copyLock.current = false; setCopying(false); refresh() }
       return
     }
-    if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) { setError(`Drop individual files into a folder. Folder transfers are available in ${fileManager}.`); return }
+    if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) { setError(t('files.dropIndividualFiles', { manager })); return }
     await copy(Array.from(event.dataTransfer.files), folder)
-  }, [copy, refresh])
+  }, [copy, manager, refresh, t])
   const deleteKey = (event: KeyboardEvent<HTMLDivElement>) => {
     // Mac keyboards have no forward Delete key; accept Finder's ⌘⌫ as well.
     if (event.key !== 'Delete' && !(isMac && event.metaKey && event.key === 'Backspace')) { treeKeys(event); return }
     event.preventDefault(); event.stopPropagation()
     const path = (event.target as HTMLElement).closest('[role="treeitem"]')?.getAttribute('data-path')
     if (event.repeat || !path || recycleLock.current || copyLock.current) return
-    recycleLock.current = true; setError(''); setStatus(`Moving ${fileName(path)} to ${trashName}…`)
+    recycleLock.current = true; setError(''); setStatus(t('files.movingToTrash', { name: fileName(path), trash }))
     api('/files/recycle', { path }).catch(error => { recycleLock.current = false; setError(message(error)); setStatus('') })
   }
   const dropProps = (folder: string) => ({
@@ -275,7 +316,7 @@ export default function FilesRail() {
     preview: entry => { setSelected(entry.path); setDestination(parentPath(entry.path)); api<Preview>(`/preview?path=${encodeURIComponent(entry.path)}`).then(setPreview).catch(reportError) },
     drag: (event, path, directory) => {
       // Hand the held mouse gesture to the OS (Windows OLE / macOS drag session) with real file paths.
-      event.preventDefault(); internalDrag.current = { path, directory, handled: false }; setError(''); setStatus(directory ? 'Drop into Chats to insert this folder path. Esc cancels.' : 'Drop into Chats to insert a path, or into another folder to move. Esc cancels.')
+      event.preventDefault(); internalDrag.current = { path, directory, handled: false }; setError(''); setStatus(directory ? t('files.dragDirStatus') : t('files.dragFileStatus'))
       api('/files/drag', { paths: [path] }).catch(error => { internalDrag.current = null; setError(message(error)); setStatus('') })
     },
   }
@@ -283,24 +324,24 @@ export default function FilesRail() {
     {open && panel === 'settings' && <WorkspaceSettings onClose={() => setOpen(false)} />}
     {open && panel === 'mcp' && <McpPanel onClose={() => setOpen(false)} />}
     {open && panel === 'network' && <NetworkPanel onClose={() => setOpen(false)} />}
-    {open && (panel === 'files' || panel === 'skills') && <div className="files-panel"><header><h2>{panel === 'skills' ? 'Skills' : 'Files'}</h2><div>
-      <button className="desk-icon" disabled={copying} onClick={() => input.current?.click()} title={`Copy files into ${fileName(destination)}`} aria-label="Add files"><Icon name="plus" size={16} /></button>
-      <button className={`desk-icon file-follow ${follow ? 'active' : ''}`} aria-pressed={follow} onClick={() => { setFollow(!follow); localStorage.setItem('mrmak.files.follow', String(!follow)) }} title={follow ? `Following ${chat?.name || 'the selected chat'}: its files open as it reads and writes them` : 'Follow the selected chat\'s agent'} aria-label="Follow the agent"><Icon name="eye" size={15} /></button>
-      <button className="desk-icon" onClick={refresh} title="Refresh files"><Icon name="refresh" size={15} /></button><button className="desk-icon" onClick={() => setOpen(false)} title="Collapse files"><Icon name="close" size={17} /></button>
+    {open && (panel === 'files' || panel === 'skills') && <div className="files-panel"><header><h2>{panel === 'skills' ? t('files.panelSkills') : t('files.panelFiles')}</h2><div>
+      <button className="desk-icon" disabled={copying} onClick={() => input.current?.click()} title={t('files.copyInto', { folder: fileName(destination) })} aria-label={t('files.addFiles')}><Icon name="plus" size={16} /></button>
+      <button className={`desk-icon file-follow ${follow ? 'active' : ''}`} aria-pressed={follow} onClick={() => { setFollow(!follow); localStorage.setItem('mrmak.files.follow', String(!follow)) }} title={follow ? t('files.followingChat', { name: chat?.name || t('files.selectedChatFallback') }) : t('files.followAgentTitle')} aria-label={t('files.followAgentAria')}><Icon name="eye" size={15} /></button>
+      <button className="desk-icon" onClick={refresh} title={t('files.refreshFiles')}><Icon name="refresh" size={15} /></button><button className="desk-icon" onClick={() => setOpen(false)} title={t('files.collapseFiles')}><Icon name="close" size={17} /></button>
     </div></header>
       <input ref={input} type="file" multiple hidden onChange={event => { void copy(Array.from(event.target.files || []), destination); event.target.value = '' }} />
-      {panel === 'files' ? <><div className="file-mode"><button className={mode === 'main' ? 'selected' : ''} onClick={() => { setMode('main'); navigate(repo) }}>Main folders</button><button className={mode === 'all' ? 'selected' : ''} onClick={() => setMode('all')}>All files</button></div>
-      <div className="file-shortcuts">{['inbox', 'projects', 'workspace', 'knowledge', 'processes'].map(name => <button key={name} {...dropProps(`${repo}/${name}`)} className={dropTarget === pathKey(`${repo}/${name}`) ? 'drop-target' : ''} onClick={() => { navigate(repo); const path = `${repo}/${name}`; setExpanded(current => new Set([...current, pathKey(path)])); setSelected(path); setDestination(path) }}><Icon name="folder" size={14} />{name}</button>)}</div></> : <div className="skill-locations">{[['Claude', '.claude/skills'], ['Codex', '.agents/skills'], ['Knowledge', 'knowledge'], ['Processes', 'processes']].map(([label, path]) => <button key={path} aria-pressed={pathKey(root) === pathKey(`${repo}/${path}`)} onClick={() => { setMode('all'); navigate(`${repo}/${path}`) }}>{label}</button>)}<p>Project skills · open a SKILL.md to read or edit.</p></div>}
-      <form className="file-path" onSubmit={event => { event.preventDefault(); setMode('all'); navigate(typedPath) }}><button type="button" title="Parent folder" onClick={() => { setMode('all'); navigate(rootFolder?.parent || repo) }}><Icon name="up" size={15} /></button><input value={typedPath} onChange={event => setTypedPath(event.target.value)} spellCheck={false} aria-label="Folder path" /><button type="submit" title="Open folder"><Icon name="arrow" size={14} /></button></form>
-      {git.status?.branch && <p className="file-branch" title={git.status.repository || ''}><span>⎇ {git.status.branch.name}</span>{git.status.branch.upstream && <small>{git.status.branch.ahead ? `↑${git.status.branch.ahead} ` : ''}{git.status.branch.behind ? `↓${git.status.branch.behind} ` : ''}{!git.status.branch.ahead && !git.status.branch.behind ? 'up to date' : ''}</small>}<small>{git.status.files.length} changed</small>{chat && <small className="file-agent" title={chat.cwd}>{chat.name}</small>}</p>}
-      <div className="file-filter"><Icon name="search" size={14} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Filter file names…" aria-label="Filter file names in expanded folders" /></div>
-      <div className={`file-list ${dropTarget === pathKey(destination) ? 'drop-area' : ''}`} role="tree" aria-label="Folder tree" onKeyDown={deleteKey} {...dropProps(destination)}>
+      {panel === 'files' ? <><div className="file-mode"><button className={mode === 'main' ? 'selected' : ''} onClick={() => { setMode('main'); navigate(repo) }}>{t('files.mainFolders')}</button><button className={mode === 'all' ? 'selected' : ''} onClick={() => setMode('all')}>{t('files.allFiles')}</button></div>
+      <div className="file-shortcuts">{['inbox', 'projects', 'workspace', 'knowledge', 'processes'].map(name => <button key={name} {...dropProps(`${repo}/${name}`)} className={dropTarget === pathKey(`${repo}/${name}`) ? 'drop-target' : ''} onClick={() => { navigate(repo); const path = `${repo}/${name}`; setExpanded(current => new Set([...current, pathKey(path)])); setSelected(path); setDestination(path) }}><Icon name="folder" size={14} />{name}</button>)}</div></> : <div className="skill-locations">{[['Claude', '.claude/skills'], ['Codex', '.agents/skills'], [t('files.knowledge'), 'knowledge'], [t('files.processes'), 'processes']].map(([label, path]) => <button key={path} aria-pressed={pathKey(root) === pathKey(`${repo}/${path}`)} onClick={() => { setMode('all'); navigate(`${repo}/${path}`) }}>{label}</button>)}<p>{t('files.skillsHint')}</p></div>}
+      <form className="file-path" onSubmit={event => { event.preventDefault(); setMode('all'); navigate(typedPath) }}><button type="button" title={t('files.parentFolder')} onClick={() => { setMode('all'); navigate(rootFolder?.parent || repo) }}><Icon name="up" size={15} /></button><input value={typedPath} onChange={event => setTypedPath(event.target.value)} spellCheck={false} aria-label={t('files.folderPathAria')} /><button type="submit" title={t('files.openFolder')}><Icon name="arrow" size={14} /></button></form>
+      {git.status?.branch && <p className="file-branch" title={git.status.repository || ''}><span>⎇ {git.status.branch.name}</span>{git.status.branch.upstream && <small>{git.status.branch.ahead ? `↑${git.status.branch.ahead} ` : ''}{git.status.branch.behind ? `↓${git.status.branch.behind} ` : ''}{!git.status.branch.ahead && !git.status.branch.behind ? t('files.branchUpToDate') : ''}</small>}<small>{t('files.changedCount', { count: git.status.files.length })}</small>{chat && <small className="file-agent" title={chat.cwd}>{chat.name}</small>}</p>}
+      <div className="file-filter"><Icon name="search" size={14} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('files.filterPlaceholder')} aria-label={t('files.filterAria')} /></div>
+      <div className={`file-list ${dropTarget === pathKey(destination) ? 'drop-area' : ''}`} role="tree" aria-label={t('files.folderTreeAria')} onKeyDown={deleteKey} {...dropProps(destination)}>
         <div role="none" className="file-entry has-reveal" {...dropProps(root)}><button role="treeitem" aria-level={1} aria-expanded="true" aria-selected={pathKey(selected) === pathKey(root)} className={`file-row file-root-row ${dropTarget === pathKey(root) ? 'drop-target' : ''}`} onClick={() => { setSelected(root); setDestination(root) }} {...dropProps(root)} title={root}><Icon name="arrow" size={11} style={{ transform: 'rotate(90deg)' }} /><Icon name="folder" size={15} /><span>{pathKey(root) === pathKey(repo) ? 'MR-MAK' : fileName(root)}</span></button><RevealFolder path={root} name={pathKey(root) === pathKey(repo) ? 'MR-MAK' : fileName(root)} /></div>
         <FolderBranch key={`${root}:${mode}`} path={root} mode={mode} tree={tree} onLoad={loaded} />
       </div>
-      <div className="file-transfer-status" aria-live="polite">{error && <p className="desk-error-inline">{error}</p>}{status && <p>{status}</p>}<small title={destination}>{copying ? 'Transferring files…' : `Drag to move · ${isMac ? '⌘⌫' : 'Delete'} to ${trashName}`}</small></div>
-      <footer><button onClick={() => navigate(repo)}>MR-MAK root</button></footer>
+      <div className="file-transfer-status" aria-live="polite">{error && <p className="desk-error-inline">{serviceMessage(error)}</p>}{status && <p>{status}</p>}<small title={destination}>{copying ? t('files.transferring') : t('files.dragToMoveHint', { key: isMac ? '⌘⌫' : 'Delete', trash })}</small></div>
+      <footer><button onClick={() => navigate(repo)}>{t('files.rootButton')}</button></footer>
     </div>}
-    <div className="files-rail">{(['files', 'skills', 'mcp', 'network', 'settings'] as const).map(name => <button key={name} className={`rail-tool ${open && panel === name ? 'active' : ''}`} onClick={() => showPanel(name)} title={name === 'network' ? 'Rede Bento' : name === 'mcp' ? 'MCP' : name[0].toUpperCase() + name.slice(1)} aria-label={name === 'network' ? 'Rede Bento' : `Toggle ${name}`} aria-pressed={open && panel === name}><Icon name={name === 'files' ? 'folder' : name} size={18} /><span>{name === 'network' ? 'Rede' : name === 'mcp' ? 'MCP' : name}</span></button>)}<button className="rail-tool" title="Workspace help" aria-label="Open Workspace help" onClick={() => api<Preview>('/preview?path=workspace%2F_shared%2Fhelp.md').then(setPreview).catch(reportError)}><Icon name="help" size={18} /><span>Help</span></button><div className="rail-spacer" /><button className="desk-icon" title="Show Chats" onClick={() => windowAction('chats')}><Icon name="chats" size={18} /></button></div>
+    <div className="files-rail">{(['files', 'skills', 'mcp', 'network', 'settings'] as const).map(name => <button key={name} className={`rail-tool ${open && panel === name ? 'active' : ''}`} onClick={() => showPanel(name)} title={t(railTitleKey[name])} aria-label={name === 'network' ? t('network.title') : t('files.toggleAria', { name: name === 'mcp' ? (lang === 'en' ? 'mcp' : 'MCP') : t(railLabelKey[name]) })} aria-pressed={open && panel === name}><Icon name={name === 'files' ? 'folder' : name} size={18} /><span>{t(railLabelKey[name])}</span></button>)}<button className="rail-tool" title={t('files.helpTitle')} aria-label={t('files.helpAria')} onClick={() => api<Preview>('/preview?path=workspace%2F_shared%2Fhelp.md').then(setPreview).catch(reportError)}><Icon name="help" size={18} /><span>{t('files.railHelp')}</span></button><div className="rail-spacer" /><button className="desk-icon" title={t('files.showChats')} onClick={() => windowAction('chats')}><Icon name="chats" size={18} /></button></div>
   </aside>
 }

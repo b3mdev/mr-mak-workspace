@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, reportError, setPreview } from './client'
 import type { FolderMapData } from './types'
 import { isMac } from './platform'
+import { tNow } from '../lib/i18n/translate'
 
 // The Files tab's Git state and the selected chat's file activity.
 export type GitState = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
@@ -86,9 +87,9 @@ export function useFollow(latest: AgentFile | null, root: string, follow: boolea
 }
 
 export const showDiff = (path: string) => api<{ path: string; name: string; text: string; truncated?: boolean }>(`/files/diff?path=${encodeURIComponent(path)}`)
-  .then(value => setPreview({ path: value.path, name: `${value.name} · diff`, size: value.text.length, kind: 'diff', text: value.truncated ? `${value.text}\n… The diff continues past 1 MB.` : value.text || 'No changes against the last commit.' })).catch(reportError)
+  .then(value => setPreview({ path: value.path, name: tNow('files.diffSuffix', { name: value.name }), size: value.text.length, kind: 'diff', text: value.truncated ? `${value.text}\n${tNow('files.diffTruncated')}` : value.text || tNow('files.diffEmpty') })).catch(reportError)
 export const showMap = (path: string) => api<FolderMapData>(`/files/map?path=${encodeURIComponent(path)}`)
-  .then(value => setPreview({ path: value.path, name: `${value.name} · size map`, size: value.size, kind: 'map', map: value })).catch(reportError)
+  .then(value => setPreview({ path: value.path, name: tNow('files.mapSuffix', { name: value.name }), size: value.size, kind: 'map', map: value })).catch(reportError)
 
 
 export interface MapBox { item: FolderMapData['children'][number]; x: number; y: number; w: number; h: number }
