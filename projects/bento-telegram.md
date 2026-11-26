@@ -25,12 +25,18 @@ Alerts contain a work name and state. The integration substitutes a generic titl
 
 ## Notification Center handoff
 
-The Telegram branch starts at the integration snapshot `e2198f5`. Its `watchTelegramWork` adapter listens to the existing managed-session signals. The separate Notification Center branch at `e86dc65` owns its queue, excerpts, local review, and managed-source contract. When merging the two branches, reconcile the shared `Sessions` viewport and guarded-submit changes before switching the event producer.
-
-Keep `TelegramIntegration.publish({ key, title, kind, proof })` as the channel boundary. Read managed items from the internal source snapshot and subscription. Map `completion`, `question`, and `manual` records to `completion`, `question`, and `attention` using a stable origin key. Seed the subscriber from the initial snapshot and publish new items only. Omit excerpts and arbitrary source payloads. Only an eligible managed question may carry reply proof. Reuse the Center's explicit-target delivery validator if it verifies the same turn and preserves current permissions and the two composer checks. External or manual sources are alert-only. Keep Telegram opt-in, its owner binding, message receipts, and provider state in the Telegram adapter.
+The Notification Center and Telegram share the desktop service's terminal
+viewport and guarded paste-and-submit path. Each has its own review and delivery
+state. Telegram subscribes to managed session events, never to external
+Notification Center adapters. Its work alerts contain only a filtered title and
+state, with reply proof attached only when the turn has trusted input lineage
+and the agent has a recognized composer. A draft or turn change in either
+surface invalidates an older reply binding through the shared input revision.
+Telegram pairing, transport, receipts and provider state live in the Telegram
+adapter.
 
 ## Verification
 
 Run `node --test desktop/service/test/telegram.test.mjs` for the Bot API transport fixtures, local desktop API, safe text model fixture, and managed terminal round trips. The baseline can bind a reply for recognized Codex, Claude Code, and Antigravity composers with confirmed native turn lineage. OpenCode and Kimi use the alert path where the baseline emits a qualifying event. Login flows, unknown composers, and native permission prompts require local handling. The handoff author's source skill paths are `.agents/skills/plan/SKILL.md` and `.agents/skills/feature-handoff/SKILL.md`.
 
-The desktop suite passed on Windows with 279 passes and 7 platform skips. Build, lint, and the desktop Settings pairing check passed. Verification uses synthetic credentials and network responses. Real Telegram accounts, provider billing and model behavior, native agent composer variations, installation, and deployment are outside the fixture coverage.
+Verification uses synthetic credentials and network responses. Real Telegram accounts, provider billing and model behavior, native agent composer variations, installation, and deployment are outside the fixture coverage.
