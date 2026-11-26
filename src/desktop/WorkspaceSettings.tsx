@@ -9,6 +9,7 @@ import { useDictation } from './useDictation'
 import ThemePicker from '../components/ThemePicker'
 import { isMac, shellName } from './platform'
 import { localizeEffort, useT } from '../lib/i18n'
+import TelegramSettings from './TelegramSettings'
 
 type NativeSettings = { available: boolean; winKey: boolean; label?: string; error?: string }
 export default function WorkspaceSettings({ onClose }: { onClose: () => void }) {
@@ -44,6 +45,7 @@ export default function WorkspaceSettings({ onClose }: { onClose: () => void }) 
       {isMac && <label className="setting-toggle"><span>{t('settings.optionMeta')}<small>{t('settings.optionMetaDesc')}</small></span><input type="checkbox" checked={!!settings.terminalOptionMeta} disabled={busy} onChange={event => void change({ terminalOptionMeta: event.target.checked })} /></label>}
       <label className="setting-toggle"><span>{t('settings.bypass')}<small>{t('settings.bypassDesc')}</small></span><input type="checkbox" checked={settings.defaultBypass} disabled={busy} onChange={event => void change({ defaultBypass: event.target.checked })} /></label>
     </section><DictationSettings info={dictation.info} onChange={dictation.choose} /><section><h3>{t('brand.name')}</h3><label>{t('settings.voiceLabel')}<select disabled={busy} value={settings.voiceName || 'cedar'} onChange={event => void change({ voiceName: event.target.value })}><option value="cedar">Cedar</option><option value="marin">Marin</option></select></label><label>{t('settings.coordinatorReasoning')}<select disabled={busy} value={settings.coordinatorEffort || 'medium'} onChange={event => void change({ coordinatorEffort: event.target.value as Settings['coordinatorEffort'] })}><option value="medium">{localizeEffort(lang, 'medium')}</option><option value="high">{localizeEffort(lang, 'high')}</option></select></label><p>{t('settings.voiceAppliesHint')}</p></section>
+      <TelegramSettings />
       <section><h3>{t('settings.projectSection')}</h3><p className="settings-repo">{repo}</p><p>{t('settings.projectRepoHint')}</p></section>
       {error && <p className="desk-error-inline" role="alert">{serviceMessage(error)}</p>}
     </div></div>

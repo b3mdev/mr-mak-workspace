@@ -88,7 +88,9 @@ export function codexSupportsNoDaemon(env = process.env) {
   return codexHelp.get(key);
 }
 
-export function terminalCommand(agent, { bypass = false, resumeId, nativeId, effort, model, settings, opencodeMajor = 1, antigravityLog, initialPrompt, readDir, noDaemon = false } = {}) {
+export const codexSkillOverrides = overrides => `skills.config=[${overrides.map(({ path: file, enabled }) => `{path=${JSON.stringify(file)},enabled=${enabled}}`).join(',')}]`;
+
+export function terminalCommand(agent, { bypass = false, resumeId, nativeId, effort, model, settings, opencodeMajor = 1, antigravityLog, initialPrompt, readDir, noDaemon = false, skillOverrides = [] } = {}) {
   if (!AGENTS.some(item => item.id === agent)) throw new Error('Unknown agent');
   resumeId = nativeConversationId(resumeId); nativeId = nativeConversationId(nativeId);
   initialPrompt = initialPromptArgument(initialPrompt);
@@ -107,6 +109,7 @@ export function terminalCommand(agent, { bypass = false, resumeId, nativeId, eff
     if (noDaemon) args.push('--no-daemon');
     if (bypass) args.push('--dangerously-bypass-approvals-and-sandbox');
     if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
+    if (skillOverrides.length) args.push('-c', codexSkillOverrides(skillOverrides));
     // Codex reads outside its working folder by default.
     if (initialPrompt) args.push(initialPrompt);
   } else if (agent === 'claude') {

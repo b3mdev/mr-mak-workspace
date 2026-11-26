@@ -1,0 +1,94 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { expect } from '@playwright/test';
+import { createService } from '../server.mjs';
+import { launchBrowser } from './browser.mjs';
+
+const repo = await mkdtemp(path.join(os.tmpdir(), 'bento-skill-ui-'));
+const home = path.join(repo, 'fake-home');
+async function source(file, contents) {
+  const location = path.join(repo, file);
+  await mkdir(path.dirname(location), { recursive: true });
+  await writeFile(location, contents);
+  return location;
+}
+const definition = name => `---\nname: ${name}\ndescription: Inspect the synthetic asset.\n---\n\n## Original directions\n`;
+await source('.git', '');
+await source('workspace/workspace.json', '{"entities":[]}');
+const editable = await source('.claude/skills/check-asset/SKILL.md', definition('check-asset'));
+await source('.claude/skills/check-asset/agents/openai.yaml', 'interface:\n  icon_small: ./icon.png\n');
+await source('.claude/skills/check-asset/icon.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=', 'base64'));
+await source('.claude/skills/locked-skill/SKILL.md', definition('locked-skill'));
+await source('.agents/skills/locked-skill/SKILL.md', definition('locked-skill'));
+await source('scripts/sync-skills.mjs', '');
+await source('fake-home/.gemini/antigravity-cli/builtin/skills/check-asset/SKILL.md', definition('check-asset'));
+const service = await createService({ repo, uiDir: path.resolve('dist'), networkStateDir: path.join(repo, 'network'), mcpOptions: { home, env: {} } });
+service.sessions.beginDiscovery = () => {};
+const live = [];
+async function add(agent, name) {
+  const imported = await service.sessions.importConversation({ agent, nativeId: randomUUID(), name, cwd: repo });
+  const session = service.sessions.get(imported.id);
+  session.open = true; session.status = 'running';
+  await service.sessions.hydrate(session);
+  const inputs = [];
+  const process = { write(input) { inputs.push(input); }, resize() {}, kill() {} };
+  session.process = process;
+  live.push({ session, process, inputs });
+  return { session, process, inputs };
+}
+let browser;
+try {
+  const first = await add('claude', 'Loaded fixture');
+  await add('claude', 'Available fixture');
+  await add('antigravity', 'Unknown fixture');
+  service.sessions.nativeEvent(first.session, { kind: 'skill-loaded', name: 'check-asset' });
+  browser = await launchBrowser();
+  const page = await browser.newPage({ viewport: { width: 450, height: 730 } });
+  await page.goto(service.urls.chats);
+  const terminal = page.locator('.terminal-host');
+  await terminal.waitFor();
+  await terminal.evaluate(node => { window.initialTerminal = node; });
+  const loaded = page.getByRole('button', { name: 'check-asset · Loaded' });
+  await expect(loaded).toHaveAttribute('title', 'check-asset · Loaded');
+  await expect(loaded.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  await loaded.press('Enter');
+  const panel = page.getByRole('region', { name: 'check-asset' });
+  await expect(panel.getByRole('heading', { name: 'Original directions' })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Close' })).toBeFocused();
+  await expect(panel.getByText('Project', { exact: true })).toBeVisible();
+  await expect(panel.locator('code').first()).toContainText('SKILL.md');
+  await panel.getByRole('button', { name: 'Edit instructions' }).click();
+  await panel.getByRole('textbox', { name: 'Skill instructions' }).fill('## Revised directions');
+  assert.equal(await readFile(editable, 'utf8'), definition('check-asset'));
+  await panel.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(panel.getByRole('heading', { name: 'Revised directions' })).toBeVisible();
+  assert.match(await readFile(editable, 'utf8'), /Revised directions/);
+  await panel.getByRole('button', { name: 'Close' }).press('Escape');
+  await expect(loaded).toBeFocused();
+  assert.equal(await terminal.evaluate(node => node === window.initialTerminal), true);
+  assert.equal(first.session.process, first.process);
+  assert.deepEqual(first.inputs, []);
+  await page.getByRole('button', { name: 'locked-skill · Available in catalog' }).click();
+  const locked = page.getByRole('region', { name: 'locked-skill' });
+  await expect(locked.getByRole('heading', { name: 'Original directions' })).toBeVisible();
+  await expect(locked.getByRole('button', { name: 'Edit instructions' })).toHaveCount(0);
+  await locked.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('tab', { name: /Available fixture/ }).click();
+  await expect(page.getByRole('button', { name: 'check-asset · Available in catalog' })).toBeVisible();
+  await expect(loaded).toHaveCount(0);
+  await page.getByRole('tab', { name: /Unknown fixture/ }).click();
+  await page.getByRole('button', { name: 'check-asset · Load status unknown' }).click();
+  await expect(panel.getByText(/Bento cannot apply per-chat skill settings/)).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 470 });
+  assert.ok(await panel.evaluate(node => node.getBoundingClientRect().right <= window.innerWidth));
+  await fetch(service.origin + '/api/settings', { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: '{"uiLanguage":"pt-BR"}' });
+  await expect(page.getByRole('button', { name: 'check-asset · Carregamento desconhecido' })).toBeVisible();
+  console.log('Chat skills UI passed: keyboard, separate chat statuses, saved and read-only instructions, active terminal, pt-BR, and narrow layout.');
+} finally {
+  await browser?.close();
+  for (const { session } of live) session.process = null;
+  await service.close();
+}

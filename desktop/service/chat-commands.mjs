@@ -42,21 +42,21 @@ const ANTIGRAVITY_BUILTINS = [
 ];
 
 // A single frontmatter value, including a folded or literal block (`description: >`).
-function field(text, name) {
+export function skillField(text, name) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1].match(new RegExp(`^${name}:[ \\t]*(.*)((?:\\r?\\n[ \\t]+.*)*)`, 'm'));
   if (!match) return '';
   const value = /^[>|][+-]?$/.test(match[1].trim()) ? match[2] : `${match[1]}${match[2]}`;
   return value.replace(/\s+/g, ' ').trim().replace(/^(['"])(.*)\1$/, '$2');
 }
 const isDirectory = async folder => (await stat(folder).catch(() => null))?.isDirectory() || false;
-const summary = text => field(text, 'description') || text.replace(/^---[\s\S]*?\n---/, '').split(/\r?\n/).map(line => line.trim()).find(line => line && !line.startsWith('#')) || '';
+const summary = text => skillField(text, 'description') || text.replace(/^---[\s\S]*?\n---/, '').split(/\r?\n/).map(line => line.trim()).find(line => line && !line.startsWith('#')) || '';
 
 // One skill per `<root>/<folder>/SKILL.md`; the frontmatter name wins over the folder.
 async function skills(root, prefix = '') {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   return (await Promise.all(entries.filter(entry => entry.isDirectory()).map(async entry => {
     const text = await readFile(path.join(root, entry.name, 'SKILL.md'), 'utf8').catch(() => null);
-    return text === null ? null : { name: prefix + (field(text, 'name') || entry.name), description: summary(text) };
+    return text === null ? null : { name: prefix + (skillField(text, 'name') || entry.name), description: summary(text) };
   }))).filter(Boolean);
 }
 async function markdownCommands(root, prefix = '') {
@@ -67,14 +67,14 @@ async function markdownCommands(root, prefix = '') {
   }));
 }
 // The chat folder and its parents up to the repository root, nearest first.
-async function projectFolders(cwd) {
+export async function projectFolders(cwd) {
   const folders = [];
   for (let folder = path.resolve(cwd); ; folder = path.dirname(folder)) {
     folders.push(folder);
     if (await stat(path.join(folder, '.git')).catch(() => null) || path.dirname(folder) === folder) return folders;
   }
 }
-async function claudePlugins(claudeHome) {
+export async function claudePluginRoots(claudeHome) {
   const installed = JSON.parse(await readFile(path.join(claudeHome, 'plugins', 'installed_plugins.json'), 'utf8').catch(() => '{}')).plugins || {};
   const enabled = JSON.parse(await readFile(path.join(claudeHome, 'settings.json'), 'utf8').catch(() => '{}')).enabledPlugins || {};
   const found = [];
@@ -82,6 +82,13 @@ async function claudePlugins(claudeHome) {
     const folder = Array.isArray(installs) ? installs[0]?.installPath : null;
     if (enabled[id] !== true || typeof folder !== 'string') continue;
     const prefix = `${id.split('@')[0]}:`;
+    found.push({ folder, prefix });
+  }
+  return found;
+}
+async function claudePlugins(claudeHome) {
+  const found = [];
+  for (const { folder, prefix } of await claudePluginRoots(claudeHome)) {
     found.push(...await skills(path.join(folder, 'skills'), prefix), ...await markdownCommands(path.join(folder, 'commands'), prefix));
   }
   return found;

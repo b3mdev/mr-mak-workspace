@@ -5,6 +5,8 @@ import { watch } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { parse as parseEnv } from 'dotenv';
 import { Sessions } from './sessions.mjs';
+import { NotificationCenter, notificationCommand, notificationReplyCaption } from './notification-center.mjs';
+import { blockingScreen, ManagedNotificationSource } from './notification-sources.mjs';
 import { Coordinator, conversationOf, openChatArguments, revisionOf } from './coordinator.mjs';
 import { Files, serveFile } from './files.mjs';
 import { importFile, dragFiles, moveFile, recyclePath, MAX_FILE_BYTES } from './file-transfers.mjs';
@@ -23,10 +25,16 @@ import { body, equalSecret, json, publicError, readJson, realFile, saveJson, sec
 import { ProjectAdapterRegistry } from './project-adapters/registry.mjs';
 import { KnowledgeManager, MarkdownKnowledgeProvider } from './knowledge/providers.mjs';
 import { IntegrationManager } from './integrations/manager.mjs';
+import { TelegramIntegration } from './integrations/telegram.mjs';
+import { watchTelegramWork, workReply } from './integrations/telegram-work.mjs';
+import { telegramConversation } from './integrations/telegram-conversation.mjs';
 import { MobileDictation } from './mobile-dictation.mjs';
 import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
+import { ChatSkills } from './chat-skills.mjs';
+import { localPath } from './local-path.mjs';
+import { releaseConversation } from './conversation-transfer.mjs';
 import { projectKey, recentProjects } from './recent-projects.mjs';
 import { projectGallery } from './project-gallery.mjs';
 import { DeviceNetwork } from './device-network.mjs';
@@ -44,7 +52,7 @@ import { defaultUiLanguage, isUiLanguage, resolveUiLanguage } from './language.m
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions, notificationSources, telegramOptions }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -57,7 +65,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   const projects = new ProjectAdapterRegistry();
   const integrations = await new IntegrationManager(stateDir).init();
   const mcp = new McpInventory(repo, mcpOptions);
-  const sessions = await new Sessions(repo, stateDir).init();
+  const chatSkills = new ChatSkills({ ...mcpOptions, ...chatSkillOptions });
+  const sessions = await new Sessions(repo, stateDir, { chatSkills }).init();
   const readUsage = usageReader(repo, stateDir, () => sessions.items.values(), codexUsageQuery);
   const transcripts = new ConversationTranscripts();
   const fileInsights = new FileInsights();
@@ -138,6 +147,15 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     sessions.input(id, attachmentText(verified, session.agent), { coordinator, submit: false });
     return { attached: verified, submitted: false };
   };
+  const notifications = await new NotificationCenter({
+    managed: new ManagedNotificationSource(sessions, async (session, id) => {
+      const transcript = await transcripts.read(session);
+      const last = transcript.messages?.at(-1);
+      return last?.role === 'assistant' && last.id === id ? last.text : '';
+    }),
+    sources: notificationSources, stateDir, settings: () => settings, revision: () => coordinatorConversation.contextRevision,
+    changed: items => broadcast('notifications', { notifications: items }),
+  }).init();
   const coordinator = await new Coordinator({
     repo, stateDir, settings: () => settings,
     context: revision => ({
@@ -151,6 +169,14 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         const target = sessions.get(args.id);
         if (target.agent === 'shell') throw new Error('Use the local shell directly. Bento Workspace can send tasks only to agent chats.');
         if (target.bypass && settings.defaultBypass !== true) throw new Error('This chat uses bypass permissions. Send the task directly, or enable bypass yourself in Settings before using Bento Workspace to control it.');
+      }
+      if (['send_to_chat', 'attach_files'].includes(name)) {
+        const view = await sessions.terminalView(args.id);
+        if (notificationCommand(latestRequest) || notifications.selection?.item.chatId === args.id ||
+          notifications.items.some(item => item.chatId === args.id && ['manual', 'question'].includes(item.kind)) ||
+          blockingScreen(view?.screen)) {
+          throw new Error('Review the notification and use the explicit reply command, or handle it directly in its chat.');
+        }
       }
       switch (name) {
         case 'list_chats': return sessions.active();
@@ -200,7 +226,9 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   }).init();
   const quick = await new QuickActions({ stateDir, workspace, context: () => ({ chats: sessions.active(), route: workspaceRoute }), execute: (...args) => coordinator.execute(...args), completed: operation => broadcast('coordinator-result', { operation }) }).init();
   const operations = () => [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => (a.at || '').localeCompare(b.at || ''));
-  const currentOperations = () => operations().filter(item => conversationOf(item) === coordinatorConversation.conversationId).slice(-30);
+  const currentOperations = () => [...operations(), ...notifications.operations.values()]
+    .filter(item => conversationOf(item) === coordinatorConversation.conversationId)
+    .sort((a, b) => (a.at || '').localeCompare(b.at || '')).slice(-30);
   const currentVoiceHistory = () => voiceHistory.filter(item => conversationOf(item) === coordinatorConversation.conversationId);
   const conversationState = () => ({ coordinatorConversation, operations: currentOperations(), voiceHistory: currentVoiceHistory(), voiceOwner, state: coordinator.state });
   const releaseVoice = () => {
@@ -212,13 +240,23 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
       throw Object.assign(new Error('The coordinator context changed. Send the request again if needed.'), { status: 409 });
     }
   };
-  const askMak = async data => {
+  const notifyOperation = operation => {
+    const { voiceResult: _voiceResult, ...display } = operation;
+    broadcast('coordinator-result', { operation: display });
+  };
+  const askMak = async (data, reviewId) => {
     checkRevision(data);
     const request = { ...data, ...coordinatorConversation };
     const signal = coordinator.run.signal;
     if (coordinator.operationPromises.has(data.id) || coordinator.operations.has(data.id)) return coordinator.ask(request);
+    const notification = notifications.ask(request, signal, reviewId, notifyOperation);
+    if (notification) return notification;
     const images = await attachments.coordinatorImages(data.images);
     signal.throwIfAborted();
+    if (typeof request.conversation === 'string') {
+      request.conversation = request.conversation.split(/(?=\n(?:user|assistant): )/).map(caption =>
+        caption.replace(/^(\n?user: )([\s\S]*)$/, (_, prefix, text) => prefix + notificationReplyCaption(text, '[Notification reply]'))).join('');
+    }
     if (images.length) return coordinator.ask({ ...request, images });
     const result = await quick.ask(request, signal);
     if (result) return result;
@@ -226,6 +264,16 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     return coordinator.ask({ ...request, images });
   };
   coordinator.on('state', state => broadcast('coordinator-state', { state }));
+  const telegram = await new TelegramIntegration({
+    dir: path.join(networkStateDir || stateDir, 'telegram'),
+    reply: workReply(sessions, () => settings.defaultBypass === true),
+    converse: telegramConversation({ key: async () => {
+      const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
+      return keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY;
+    } }),
+    ...telegramOptions, changed: () => broadcast('telegram-state', {}),
+  }).init();
+  const stopTelegramWork = watchTelegramWork(sessions, event => { void telegram.publish(event); });
   coordinator.on('result', operation => broadcast('coordinator-result', { operation }));
   coordinator.on('error-detail', error => broadcast('service-error', { error }));
   sessions.on('session', session => { broadcast('session', { session }); integrations.publish('session', { event: session.status, session }).catch(() => {}); });
@@ -283,6 +331,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'POST' && url.pathname === '/api/transcribe') return json(response, 200, await dictation.transcribe(request, 'desktop', () => !closing));
         const data = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? await body(request, url.pathname === '/api/files/markdown' ? 12 * 1024 * 1024 : url.pathname.startsWith('/api/workspace/cards') ? 2 * 1024 * 1024 : 256 * 1024) : {};
         if (method === 'POST' && url.pathname === '/api/dictation') return json(response, 200, await chooseDictation(data.provider));
+        if (method === 'GET' && url.pathname === '/api/telegram') return json(response, 200, telegram.status());
+        if (method === 'POST' && url.pathname === '/api/telegram') return json(response, 200, await telegram.configure(data.action, data.enabled));
         if (method === 'GET' && url.pathname === '/api/mobile') return json(response, 200, mobile.status());
         if (method === 'GET' && url.pathname === '/api/mobile/check') return json(response, 200, await mobile.transport.probe());
         if (method === 'POST' && url.pathname === '/api/mobile/enable') return json(response, 200, await mobile.enable());
@@ -298,7 +348,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'GET' && url.pathname === '/api/bootstrap') {
           const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
           const { operations, voiceHistory } = conversationState();
-          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, coordinatorConversation, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations });
+          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, notifications: notifications.publicItems(), coordinator: coordinator.state, coordinatorConversation, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations });
         }
         if (method === 'GET' && url.pathname === '/api/workspace') return json(response, 200, await registry());
         if (method === 'GET' && url.pathname === '/api/workspace/projects') return json(response, 200, await loadGallery());
@@ -340,8 +390,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'POST' && url.pathname === '/api/preview/show') {
           // A link in a chat may be relative to that chat's working folder.
           const base = typeof data.sessionId === 'string' ? sessions.get(data.sessionId).cwd : repo;
-          if (typeof data.path !== 'string' || !data.path.trim() || /[\x00-\x1f]/.test(data.path)) throw new Error('Choose a local file or folder.');
-          const target = await realpath(path.resolve(base, data.path));
+          const target = await localPath(base, data.path);
           if ((await stat(target)).isDirectory()) { native({ type: 'reveal', path: target }); return json(response, 200, { shown: 'folder', path: target }); }
           const preview = await files.preview(target); show('workspace', { preview });
           return json(response, 200, { shown: 'preview', path: preview.path });
@@ -440,7 +489,33 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
             // Bento Workspace answers Claude Code's cache warning itself while it applies a footer model change.
             return json(response, 200, { ...value, prompt: session.process && !switchingModel(id) ? await readPrompt(sessions, id) : null });
           }
+          if (method === 'GET' && action === 'earlier') {
+            const session = sessions.get(id), before = url.searchParams.get('before');
+            if (before && before.length > 256) throw Object.assign(new Error('Choose a message to read earlier history.'), { status: 400 });
+            const value = await transcripts.older(session, before);
+            return json(response, 200, await conversationMedia.present(value, session, 'desktop', grant => `/media/${session.id}/${grant}`));
+          }
+          if (method === 'GET' && action === 'export') {
+            const history = await transcripts.fullHistory(sessions.get(id));
+            if (!history) throw Object.assign(new Error('This conversation has no readable local history.'), { status: 404 });
+            return json(response, 200, { messages: history.messages.filter(message => message.role !== 'system' && message.text.trim()).map(({ role, text }) => ({ role, text })) });
+          }
           if (method === 'GET' && action === 'commands') { const session = sessions.get(id); return json(response, 200, await chatCommands(session.agent, session.cwd, mcpOptions)); }
+          if (action === 'skills') {
+            const session = sessions.get(id);
+            if (method === 'GET') {
+              const skill = url.searchParams.get('skill');
+              return json(response, 200, skill ? await chatSkills.detail(session, skill) : await chatSkills.list(session));
+            }
+            if (method === 'POST' && data.action === 'save') {
+              return json(response, 200, await chatSkills.save(session, data.skill, data.revision, data.instructions));
+            }
+            if (method === 'POST' && data.action === 'setEnabled') {
+              await chatSkills.setEnabled(session, data.skill, data.enabled);
+              await sessions.persist();
+              return json(response, 200, await chatSkills.list(session));
+            }
+          }
           if (method === 'GET' && action === 'stats') {
             const session = sessions.get(id);
             const { supported, userMessages = 0, truncated = false, model = null, effort = null, modelName = null } = await liveStats(session, await transcripts.read(session), stateDir);
@@ -467,6 +542,10 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
             return json(response, 200, sessions.input(id, `${text}${paths.length ? `${text ? '\n' : ''}${attachmentText(paths, session.agent)}` : ''}`, { coordinator: true, submit: true }));
           }
           if (method === 'POST' && action === 'focus') return json(response, 200, focus(id));
+          if (method === 'POST' && action === 'transfer') {
+            const session = sessions.get(id);
+            return json(response, 200, await releaseConversation(session, () => closeChat(id)));
+          }
           if (method === 'POST' && action === 'stop') return json(response, 200, sessions.stop(id));
           if (method === 'POST' && action === 'resume') { const session = await sessions.resume(id, data.nativeId); focus(id); return json(response, 200, session); }
           if (method === 'POST' && action === 'attach') return json(response, 200, await attach(id, data.paths));
@@ -476,21 +555,33 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
           if (method === 'PATCH' && !action) return json(response, 200, typeof data.pinned === 'boolean' ? sessions.pin(id, data.pinned) : typeof data.unread === 'boolean' ? sessions.mark(id, data.unread) : 'handoffSnooze' in data ? sessions.snoozeHandoff(id, data.handoffSnooze) : 'tabColor' in data ? sessions.color(id, data.tabColor) : 'group' in data ? await sessions.assign(id, data.group) : sessions.rename(id, data.name));
           if (method === 'DELETE' && !action) return json(response, 200, await closeChat(id));
         }
+        if (method === 'POST' && url.pathname === '/api/browseros/split') {
+          if (process.platform !== 'win32') throw Object.assign(new Error('Side-by-side BrowserOS neo is available on Windows.'), { status: 501 });
+          if (typeof data.requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(data.requestId)) throw new Error('Invalid BrowserOS window request.');
+          native({ type: 'browseros-split', requestId: data.requestId });
+          return json(response, 200, { requested: true });
+        }
         if (method === 'POST' && url.pathname === '/api/window') {
           if (!['chats', 'workspace'].includes(data.window) || !['show', 'hide', 'minimize', 'pin'].includes(data.action)) throw new Error('Unknown window action');
           native({ type: 'window', action: data.action, window: data.window, value: !!data.value }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/reveal') {
-          const file = await realpath(path.resolve(data.path));
+          const base = typeof data.sessionId === 'string' ? sessions.get(data.sessionId).cwd : repo;
+          const file = await localPath(base, data.path);
           native({ type: 'reveal', path: file }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/coordinator') return json(response, 200, await askMak(data));
+        if (method === 'POST' && url.pathname === '/api/notifications/review') {
+          if (typeof data.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(data.itemId)) throw new Error('Choose a notification.');
+          return json(response, 200, await askMak(data, data.itemId));
+        }
         if (method === 'POST' && url.pathname === '/api/coordinator/prepare') { await coordinator.start(); return json(response, 200, { ready: true, model: coordinator.model }); }
         if (method === 'GET' && url.pathname === '/api/coordinator/context') return json(response, 200, await library.overview({ excerpts: true }));
         if (method === 'POST' && url.pathname === '/api/coordinator/conversation') {
           checkRevision(data);
           if (!['stop', 'reset', 'new'].includes(data.action)) throw new Error('Choose a coordinator conversation action.');
           coordinator.cancel();
+          notifications.reset();
           if (data.action !== 'stop') {
             const contextRevision = coordinatorConversation.contextRevision + 1;
             coordinatorConversation = { contextRevision, conversationId: data.action === 'new' ? contextRevision : coordinatorConversation.conversationId };
@@ -502,7 +593,9 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         }
         if (method === 'POST' && url.pathname === '/api/live/transcript') {
           if (typeof data.id !== 'string' || data.id.length > 200 || !Array.isArray(data.captions)) throw new Error('A voice session and captions are required.');
-          const captions = data.captions.slice(-50).filter(item => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string').map(item => ({ role: item.role, text: item.text.slice(0, 1000), start: Number(item.start) || 0, end: Number(item.end) || 0 }));
+          const privateReply = settings.uiLanguage === 'pt-BR' ? '[Resposta a uma notificação]' : '[Notification reply]';
+          const captions = data.captions.slice(-50).filter(item => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string')
+            .map(item => ({ role: item.role, text: (item.role === 'user' ? notificationReplyCaption(item.text, privateReply) : item.text).slice(0, 1000), start: Number(item.start) || 0, end: Number(item.end) || 0 }));
           const conversationId = Number.isSafeInteger(data.conversationId) ? data.conversationId : coordinatorConversation.conversationId;
           const transcript = { id: data.id, conversationId, at: new Date().toISOString(), captions };
           voiceHistory = [...voiceHistory.filter(item => item.id !== data.id || conversationOf(item) !== conversationId), transcript].slice(-12);
@@ -571,7 +664,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (!ws.authenticated) {
           if (message.type !== 'auth' || !equalSecret(message.token, token)) return ws.close(1008, 'Authentication failed');
           ws.authenticated = true; ws.clientId = message.clientId; ws.surface = message.surface; clients.add(ws); clearTimeout(authTimer);
-          send(ws, 'connected', { sessions: sessions.list(), selectedId, ...conversationState() }); return;
+          send(ws, 'connected', { sessions: sessions.list(), selectedId, notifications: notifications.publicItems(), ...conversationState() }); return;
         }
         if (message.type === 'subscribe') {
           ws.sessionId = message.id;
@@ -592,12 +685,13 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   try { watcher = watch(path.join(repo, 'workspace', 'workspace.json'), () => broadcast('workspace-changed', {})); watcher.on('error', () => {}); } catch { /* Registry may be created after first setup. */ }
   const restoreTimer = restoreSessions ? setTimeout(() => sessions.restore().catch(error => sessions.emit('service-error', error)), 100) : null;
   return {
-    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, cards, files, projects, knowledge, integrations, mobile,
+    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, notifications, workspace, cards, files, projects, knowledge, integrations, mobile,
     urls: { workspace: `${origin}/?desktop=1&surface=workspace&token=${token}`, chats: `${origin}/?desktop=1&surface=chats&token=${token}` },
       nativeMessage: event => nativeSettings.receive(event),
       async close() {
         if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
-      watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
+      stopTelegramWork(); await telegram.close();
+      watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); await notifications.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
       dictation.close(); await network.close(); await mobile.close();
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();

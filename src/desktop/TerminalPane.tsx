@@ -86,7 +86,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, optionMe
     // Automatic focus leaves a text field the person is typing in elsewhere, such as a tab rename.
     const focusIdle = () => {
       const active = document.activeElement as HTMLElement | null
-      if (active && !host.current?.contains(active) && (active.matches('input, textarea, select') || active.isContentEditable)) return
+      if (active && !host.current?.contains(active) && (active.matches('input, textarea, select') || active.isContentEditable || active.closest('[data-preserve-terminal-focus]'))) return
       terminal.focus()
     }
     const terminal = new Terminal({

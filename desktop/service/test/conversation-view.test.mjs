@@ -3,13 +3,83 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createService } from '../server.mjs';
 import { recentProjects } from '../recent-projects.mjs';
 import { answerPrompt, readPrompt, terminalPrompt } from '../terminal-prompt.mjs';
+import { releaseConversation } from '../conversation-transfer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(32)]);
+
+test('desktop can page through a native chat beyond both recent-history limits and respect a rewind', { timeout: 30000 }, async t => {
+  const repo = await claudeHome(t, []);
+  await mkdir(path.join(repo, 'workspace'));
+  await writeFile(path.join(repo, 'workspace', 'workspace.json'), '{"entities":[]}');
+  const day = path.join(repo, 'codex', 'sessions', '2026', '10', '15');
+  await mkdir(day, { recursive: true });
+  const id = randomUUID(), rewind = randomUUID(), cwd = await realpath(repo);
+  const record = (index, label = `Message ${index}`) => ({ type: 'event_msg', timestamp: new Date(index * 1000).toISOString(), payload: { type: 'user_message', message: label } });
+  const jsonl = values => values.map(value => JSON.stringify(value)).join('\n') + '\n';
+  const old = jsonl([{ type: 'session_meta', payload: { id, cwd } }, ...Array.from({ length: 151 }, (_, index) => record(index))]);
+  await writeFile(path.join(day, `rollout-2026-10-15T00-00-00-${id}.jsonl`), old + jsonl([record(151, 'Abandoned branch')]));
+  await writeFile(path.join(day, `rollout-2026-10-15T01-00-00-${id}_${rewind}.jsonl`), jsonl([
+    { type: 'session_meta', payload: { id, cwd, history_base: { end_byte_offset: Buffer.byteLength(old) } } },
+    { type: 'ignored', payload: 'x'.repeat(5 * 1024 * 1024) },
+    ...Array.from({ length: 110 }, (_, index) => record(index + 151)),
+  ]));
+  const service = await createService({ repo, uiDir: repo, networkStateDir: path.join(repo, 'network') });
+  service.sessions.beginDiscovery = () => {};
+  t.after(() => service.close());
+  const session = await service.sessions.importConversation({ agent: 'codex', nativeId: id, name: 'Long history', cwd });
+  const endpoint = `${service.origin}/api/sessions/${session.id}`;
+  const get = async suffix => {
+    const response = await fetch(endpoint + suffix, { headers: { Authorization: `Bearer ${service.token}` } });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  assert.equal((await fetch(endpoint + '/earlier')).status, 401);
+  const latest = await get('/messages');
+  assert.equal(latest.messages.length, 100);
+  assert.equal(latest.messages[0].text, 'Message 161');
+  assert.equal(latest.hasOlder, true);
+  const prior = await get('/earlier?before=' + latest.messages[0].id);
+  assert.equal(prior.messages.length, 100);
+  assert.equal(prior.messages[0].text, 'Message 61');
+  assert.equal(prior.hasOlder, true);
+  const beginning = await get('/earlier?before=' + prior.messages[0].id);
+  assert.equal(beginning.messages.length, 61);
+  assert.equal(beginning.messages[0].text, 'Message 0');
+  assert.equal(beginning.hasOlder, false);
+  const exported = await get('/export');
+  assert.deepEqual(exported.messages.map(message => message.text), Array.from({ length: 261 }, (_, index) => `Message ${index}`));
+  assert.equal(service.sessions.get(session.id).open, false);
+  assert.equal(service.sessions.get(session.id).process, null);
+});
+
+test('handoff validates and waits for release before launching, with busy and duplicate protection', async () => {
+  const session = { status: 'running', activity: 'working' };
+  const events = [];
+  let finishClose;
+  const closed = new Promise(resolve => { finishClose = resolve; });
+  let beginClose;
+  const closing = new Promise(resolve => { beginClose = resolve; });
+  const close = async () => { events.push('close'); beginClose(); await closed; events.push('released'); };
+  const prepare = async () => { events.push('prepare'); return () => { events.push('launch'); }; };
+  await assert.rejects(releaseConversation(session, close, prepare), { status: 409 });
+  assert.deepEqual(events, []);
+  session.activity = 'idle';
+  await assert.rejects(releaseConversation(session, close, async () => { throw new Error('Missing application'); }), /Missing application/);
+  assert.deepEqual(events, []);
+  const transfer = releaseConversation(session, close, prepare);
+  await closing;
+  assert.deepEqual(events, ['prepare', 'close']);
+  await assert.rejects(releaseConversation(session, close, prepare), { status: 409 });
+  finishClose();
+  assert.deepEqual(await transfer, { released: true });
+  assert.deepEqual(events, ['prepare', 'close', 'released', 'launch']);
+  assert.equal(session.transferring, false);
+});
 
 async function claudeHome(t, projects) {
   await mkdir(path.join(root, '.cache'), { recursive: true });
@@ -46,8 +116,12 @@ test('desktop conversation view reads the native transcript, grants its media an
   await mkdir(path.join(repo, 'ui')); await writeFile(path.join(repo, 'ui', 'index.html'), '<html></html>');
   await mkdir(path.join(repo, 'workspace')); await writeFile(path.join(repo, 'workspace', 'workspace.json'), '{"entities":[]}');
   await writeFile(path.join(repo, 'render.png'), png);
+  const deliveryFolder = await mkdtemp(path.join(root, '.cache', 'Entrega acentuada '));
+  const delivery = path.join(deliveryFolder, 'Calçada, céu & pôr do sol #2.psd');
+  await writeFile(delivery, 'Fixture');
+  const nativeEvents = [];
   const home = await claudeHome(t, [repo]);
-  const service = await createService({ repo, uiDir: path.join(repo, 'ui') });
+  const service = await createService({ repo, uiDir: path.join(repo, 'ui'), native: event => nativeEvents.push(event) });
   t.after(() => service.close());
   const request = (route, data) => fetch(service.origin + '/api' + route, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
 
@@ -81,7 +155,22 @@ test('desktop conversation view reads the native transcript, grants its media an
   const shown = await (await request('/preview/show', { path: 'render.png', sessionId: session.id })).json();
   assert.deepEqual(shown, { shown: 'preview', path: path.join(cwd, 'render.png') });
   assert.equal((await (await request('/preview/show', { path: '.', sessionId: session.id })).json()).shown, 'folder');
-  assert.equal((await request('/preview/show', { path: 'missing.txt', sessionId: session.id })).status, 400);
+  const missing = await request('/preview/show', { path: 'missing.txt', sessionId: session.id });
+  assert.equal(missing.status, 404);
+  assert.match((await missing.json()).error, /moved or renamed/);
+  for (const spelling of [delivery.replaceAll('\\', '/'), pathToFileURL(delivery).href]) {
+    const preview = await request('/preview/show', { path: spelling, sessionId: session.id });
+    assert.equal(preview.status, 200);
+    assert.equal((await preview.json()).path, await realpath(delivery));
+    const response = await request('/reveal', { path: spelling, sessionId: session.id });
+    assert.equal(response.status, 200);
+    assert.deepEqual(nativeEvents.at(-1), { type: 'reveal', path: await realpath(delivery) });
+  }
+  const count = nativeEvents.length;
+  const absent = await request('/reveal', { path: pathToFileURL(path.join(deliveryFolder, 'missing.psd')).href });
+  assert.equal(absent.status, 404);
+  assert.match((await absent.json()).error, /moved or renamed/);
+  assert.equal(nativeEvents.length, count);
 
   const speak = await request(`/sessions/${session.id}/speak`, { voice: 'am_michael', text: 'Hello' });
   assert.equal(speak.status, 503); assert.match((await speak.json()).error, /Set up local Read aloud/);

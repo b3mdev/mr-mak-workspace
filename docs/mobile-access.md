@@ -176,6 +176,13 @@ Test names and mixed-language phrases on your own microphone before relying on
 it. Optional `MRMAK_WHISPER_PYTHON` and `MRMAK_WHISPER_MODEL` point to an existing
 Python executable and downloaded model directory.
 
+When CTranslate2 detects a GPU and can load the CUDA 12 cuBLAS library, Whisper
+tries GPU transcription first. It falls back to the CPU if the library is
+unavailable or the GPU attempt fails. On Windows, cuBLAS can come from the
+optional `nvidia-cublas-cu12` package in the dictation Python environment.
+To use a different local model, set `MRMAK_WHISPER_MODEL` to its directory and keep
+the default model in place for the setup command.
+
 To switch between Free and Paid, open the **phone icon at the top right**.
 On desktop this opens **Phone settings**, combining pairing, devices and
 speech-to-text. On mobile it opens the same provider choice alongside install

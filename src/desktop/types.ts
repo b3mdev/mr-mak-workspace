@@ -5,6 +5,7 @@ export type AgentId = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'kimi' |
 export type Effort = 'medium' | 'high' | 'xhigh' | 'max'
 export interface AgentInfo { id: AgentId; label: string; color: string; available: boolean; subscription: boolean }
 export interface ChatSession {
+  skillEvidenceVersion?: number
   id: string; name: string; agent: AgentId; cwd: string; bypass: boolean
   /** The footer menu can also choose low for a Claude chat. */
   effort?: Effort | 'low'
@@ -29,7 +30,11 @@ export interface GalleryProject extends RecentProject { cover: string | null; re
 export interface ProjectGallery { projects: GalleryProject[]; covers: Record<string, string> }
 export interface Handoff { status: 'summarizing' | 'opening' | 'done' | 'failed'; error?: string | null; sessionId?: string | null; file?: string | null; at: string }
 export interface Notice { id: string; sessionId: string; name: string; kind: string; text: string; at: string }
-export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[]; conversationId?: number; contextRevision?: number }
+export interface BentoNotification {
+  id: string; ref: number; source: string; app: string; title: string; chatId?: string; at: string | null
+  kind: 'manual' | 'question' | 'completion' | 'unread' | 'external'
+}
+export interface Operation { id: string; text: string; status: string; result?: string; at: string; images?: string[]; conversationId?: number; contextRevision?: number; route?: string; voiceResult?: string; notificationDetail?: string }
 export interface CoordinatorConversation { conversationId: number; contextRevision: number }
 export interface ContextSource { path: string; available: boolean; text?: string; truncated?: boolean }
 export interface LocalContext {
@@ -46,7 +51,7 @@ export interface FolderMapData { path: string; name: string; parent: string; siz
 export interface Preview { path: string; name: string; size: number; kind: 'document' | 'image' | 'video' | 'audio' | 'text' | 'unsupported' | 'diff' | 'map'; url?: string; text?: string; revision?: string; reason?: string; map?: FolderMapData }
 export interface DesktopState {
   ready: boolean; connected: boolean; error: string | null; repo: string; contentBase: string
-  agents: AgentInfo[]; sessions: ChatSession[]; selectedId: string | null; notices: Notice[]
+  agents: AgentInfo[]; sessions: ChatSession[]; selectedId: string | null; notices: Notice[]; notifications: BentoNotification[]
   settings: Settings; coordinator: string; coordinatorConversation: CoordinatorConversation; voice: { configured: boolean; owner: VoiceOwner | null }
   operations: Operation[]; preview: Preview | null
   voiceHistory: { id: string; at: string; captions: { role: 'user' | 'assistant'; text: string; start: number; end: number }[] }[]
@@ -54,6 +59,6 @@ export interface DesktopState {
 export interface ServiceEvent {
   type: string; id?: string; data?: string; sequence?: number; session?: ChatSession; sessions?: ChatSession[]
   selectedId?: string; sessionId?: string; state?: string; error?: string; notice?: Notice
-  operation?: Operation; settings?: Settings; owner?: VoiceOwner | null; window?: string; route?: string; preview?: Preview; handoff?: Handoff
+  notifications?: BentoNotification[]; operation?: Operation; settings?: Settings; owner?: VoiceOwner | null; window?: string; route?: string; preview?: Preview; handoff?: Handoff
   coordinatorConversation?: CoordinatorConversation; operations?: Operation[]; voiceHistory?: DesktopState['voiceHistory']; voiceOwner?: VoiceOwner | null
 }

@@ -1,0 +1,32 @@
+.chat-skill-stage{position:relative;display:flex;flex:1;min-height:0;min-width:0}
+.chat-skill-content{display:flex;flex:1;min-width:0;min-height:0;flex-direction:column}
+.chat-skill-rail{align-self:center;display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;width:42px;max-height:calc(100% - 14px);padding:5px 2px;overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
+.chat-skill-badge{position:relative;display:grid;place-items:center;flex:none;width:29px;height:29px;border:1px solid var(--hairline-strong);border-radius:7px;background:var(--surface-solid);color:var(--text-dim);cursor:pointer;font:650 9px var(--font-body)}
+.chat-skill-badge span{display:grid;place-items:center}
+.chat-skill-badge img{width:16px;height:16px;object-fit:contain}
+.chat-skill-badge i,.chat-skill-state i{width:5px;height:5px;border-radius:50%;background:currentColor}
+.chat-skill-badge i{position:absolute;right:3px;bottom:3px}
+.chat-skill-badge[data-status="loaded"],.chat-skill-state[data-status="loaded"]{color:var(--green)}
+.chat-skill-badge[data-status="available"],.chat-skill-state[data-status="available"]{color:var(--purple)}
+.chat-skill-badge[data-status="disabled"],.chat-skill-state[data-status="disabled"]{color:var(--text-dim);opacity:.65}
+.chat-skill-badge:is(:hover,[aria-current]){border-color:currentColor;background:var(--surface-2)}
+.chat-skill-badge:focus-visible,.chat-skill-panel :is(button,textarea):focus-visible{outline:2px solid var(--pink);outline-offset:1px}
+.chat-skill-badge:focus-visible{outline-offset:-2px}
+.chat-skill-panel{position:absolute;z-index:9;top:50%;left:42px;transform:translateY(-50%);display:flex;flex-direction:column;width:min(345px,calc(100% - 51px));max-height:calc(100% - 12px);border:1px solid var(--hairline-strong);border-radius:12px;background:var(--surface-solid);color:var(--text);box-shadow:0 12px 32px #0007;font:12px/1.5 var(--font-body);overflow:hidden}
+.chat-skill-panel>header{display:flex;gap:9px;align-items:flex-start;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--hairline)}
+.chat-skill-panel h2,.chat-skill-panel h3{color:var(--text-bright);font-size:13px;overflow-wrap:anywhere}
+.chat-skill-panel small{display:block;color:var(--text-dim)}
+.chat-skill-panel-body{display:grid;gap:8px;min-height:0;padding:10px 12px;overflow:auto;overflow-wrap:anywhere;overscroll-behavior:contain}
+.chat-skill-panel dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;font-size:11px}
+.chat-skill-panel dt{color:var(--text-dim)}
+.chat-skill-panel dd{margin:0;overflow-wrap:anywhere}
+.chat-skill-state{display:flex;align-items:center;gap:6px;font-weight:650}
+.chat-skill-settings,.chat-skill-instructions{display:grid;gap:6px;padding-top:7px;border-top:1px solid var(--hairline)}
+.chat-skill-actions{display:flex;flex-wrap:wrap;gap:6px}
+.chat-skill-panel-body button{display:inline-flex;justify-self:start;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--hairline-strong);border-radius:6px;background:var(--surface-2);color:var(--text);font:inherit;cursor:pointer}
+.chat-skill-panel-body button:disabled{opacity:.55;cursor:default}
+.chat-skill-panel textarea{width:100%;min-height:80px;resize:vertical;padding:7px;border:1px solid var(--hairline-strong);border-radius:6px;background:var(--bg);color:var(--text-bright);font:11px/1.5 var(--font-mono,monospace)}
+.chat-skill-markdown{display:grid;gap:6px;overflow-wrap:anywhere}
+.chat-skill-markdown :is(ol,ul){padding-inline-start:18px}
+.chat-skill-markdown pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-skill-error{color:var(--red)}

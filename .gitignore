@@ -6,6 +6,7 @@
 **/credentials.json
 **/token.json
 **/tokens.json
+**/telegram/bot.token
 .claude/settings.local.json
 .codex/auth.json
 .mrmak/

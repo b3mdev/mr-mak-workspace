@@ -135,7 +135,9 @@ export class LiveVoice {
     this.append('thinking', 'The requested action is pending. Wait for the verified result. Do not narrate internal routing or repeat a progress phrase.', id)
     const operation = await api<Operation>('/coordinator', { id: `${this.sessionId}:${id}`, text, selectedId: desktopState().selectedId, contextRevision: this.conversation?.contextRevision, conversation: captions.slice(-20).map(item => `${item.role}: ${item.text}`).join('\n') })
     if (generation !== this.generation) return
-    this.append('commentary', `${operation.status}: ${operation.result || 'No result was returned.'}`, id)
+    const result = operation.result || 'No result was returned.'
+    const commentary = operation.route === 'notification' ? operation.voiceResult || result : `${operation.status}: ${result}`
+    this.append('commentary', commentary, id)
     this.context()
   }
   stop() {

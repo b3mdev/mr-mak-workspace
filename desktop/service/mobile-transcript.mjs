@@ -1,5 +1,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { imageReferences } from './conversation-media.mjs';
 import { claudeTranscript } from './native-events.mjs';
@@ -140,6 +142,7 @@ export function activeBranch(records) {
 export function transcriptMessages(records, agent, limit = 100) {
   if (agent === 'claude') records = activeBranch(records);
   const messages = [];
+  const revisions = new Map();
   // Codex event messages avoid showing injected environment/instruction records.
   // Codex 0.163 records them as completed UserMessage and AgentMessage items.
   const codexItem = item => item.type === 'event_msg' && item.payload?.type === 'item_completed' ? item.payload.item : null;
@@ -199,10 +202,13 @@ export function transcriptMessages(records, agent, limit = 100) {
     const id = item.uuid || codexItem(item)?.id || (item.step_index != null ? `agy-${item.step_index}` : null) || createHash('sha256').update(`${at}:${role}:${text}:${imageRefs.join(";")}`).digest('hex').slice(0, 24);
     // Streaming revisions of a Claude message have the same message ID.
     const nativeId = item.message?.id;
-    const previous = nativeId && messages.findIndex(message => message.nativeId === nativeId);
+    const previous = nativeId && revisions.get(nativeId);
     const message = { id, role, text: text.slice(0, 100000), at, nativeId, ...(imageRefs.length ? { imageRefs } : {}), ...(event ? { event } : {}) };
-    if (typeof previous === 'number' && previous >= 0) messages[previous] = message;
-    else messages.push(message);
+    if (typeof previous === 'number') messages[previous] = message;
+    else {
+      if (nativeId) revisions.set(nativeId, messages.length);
+      messages.push(message);
+    }
   }
   return messages.slice(-limit).map(({ nativeId: _nativeId, ...message }) => message);
 }
@@ -232,6 +238,45 @@ export async function transcriptText(files, limit = 4 * 1024 * 1024) {
   }
   return { text, truncated: false };
 }
+
+// Stream the complete active history only on request. Keep the byte boundaries
+// the native Codex rewind metadata gives us, including across multiple rewinds.
+export async function historyRecords(files, latestSize) {
+  const ranges = [];
+  let end = latestSize;
+  for (let index = files.length - 1; index >= 0 && end > 0; index--) {
+    const file = files[index];
+    ranges.push({ file, end });
+    if (index === 0) break;
+    let base;
+    const stream = createReadStream(file, { end: end - 1 });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        try { base = JSON.parse(line).payload?.history_base; } catch { /* No segment metadata. */ }
+        break;
+      }
+    } finally { stream.destroy(); }
+    if (!Number.isSafeInteger(base?.end_byte_offset) || base.end_byte_offset < 0) break;
+    end = Math.min(base.end_byte_offset, (await stat(files[index - 1])).size);
+  }
+  const records = [];
+  for (const { file, end: size } of ranges.reverse()) {
+    const stream = createReadStream(file, { end: size - 1 });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        try { records.push(JSON.parse(line)); } catch { /* Skip incomplete records. */ }
+      }
+    } finally { stream.destroy(); }
+  }
+  return records;
+}
+
+const pageSize = 100;
+const transcriptFiles = async session => session.agent === 'claude' ? [await claudeTranscript(session.cwd, session.nativeId)]
+  : session.agent === 'antigravity' ? [await antigravityFullTranscript(session.nativeId)]
+  : codexSegments(session.nativeId);
 
 // The task a Claude Code <task-notification> reports as stopped: a subagent or a
 // background command. It arrives as a user turn (in a subagent after a "[SYSTEM
@@ -304,12 +349,46 @@ export function subagentStep(records) {
 export class ConversationTranscripts {
   cache = new Map();
   subagents = new Map();
+  history = new Map();
+
+  async fullHistory(session) {
+    const native = `${session.agent}:${session.nativeId}`;
+    const cached = this.history.get(session.id);
+    let snapshot;
+    if (session.agent === 'opencode' && session.nativeId) {
+      const read = await readOpencodeSession(session.nativeId, cached?.native === native ? cached.key : undefined, { budget: Infinity });
+      if (!read) return null;
+      if (cached?.native === native && cached.key === read.key) return cached;
+      snapshot = { key: read.key, records: read.records };
+    } else if (['codex', 'claude', 'antigravity'].includes(session.agent) && session.nativeId) {
+      const files = await transcriptFiles(session);
+      if (!files.at(-1)) return null;
+      const info = await stat(files.at(-1)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      if (!info) return null;
+      const key = `${files.join('|')}:${info.size}:${info.mtimeMs}`;
+      if (cached?.native === native && cached.key === key) return cached;
+      snapshot = { key, records: await historyRecords(files, info.size) };
+    } else return null;
+    const value = { native, key: snapshot.key, messages: transcriptMessages(snapshot.records, session.agent, Infinity) };
+    this.history.delete(session.id);
+    this.history.set(session.id, value);
+    if (this.history.size > 2) this.history.delete(this.history.keys().next().value);
+    return value;
+  }
+
+  async older(session, before) {
+    const snapshot = await this.fullHistory(session);
+    if (!snapshot) return { messages: [], hasOlder: false, stale: true };
+    const end = before ? snapshot.messages.findIndex(message => message.id === before) : -1;
+    if (end < 0) return { messages: snapshot.messages.slice(-pageSize), hasOlder: snapshot.messages.length > pageSize, replace: true };
+    const start = Math.max(0, end - pageSize);
+    return { messages: snapshot.messages.slice(start, end), hasOlder: start > 0 };
+  }
+
   async read(session) {
     if (session.agent === 'opencode' && session.nativeId) return this.readOpencode(session);
     if (!['codex', 'claude', 'antigravity'].includes(session.agent) || !session.nativeId) return { supported: false, messages: [] };
-    const files = session.agent === 'claude' ? [await claudeTranscript(session.cwd, session.nativeId)]
-      : session.agent === 'antigravity' ? [await antigravityFullTranscript(session.nativeId)]
-      : await codexSegments(session.nativeId);
+    const files = await transcriptFiles(session);
     if (!files.length) return { supported: false, messages: [] };
     try {
       const info = await stat(files.at(-1));
@@ -321,7 +400,7 @@ export class ConversationTranscripts {
         const messages = transcriptMessages(records, session.agent, Infinity);
         // Prompts the user sent; it measures how long a conversation has become.
         const userMessages = messages.filter(item => item.role === 'user').length;
-        const value = { supported: true, messages: messages.slice(-100), userMessages, activity: transcriptActivity(records, session.agent), files: fileActivity(records, session.agent, session.cwd), model: transcriptModel(records, session.agent), truncated };
+        const value = { supported: true, messages: messages.slice(-pageSize), hasOlder: truncated || messages.length > pageSize, userMessages, activity: transcriptActivity(records, session.agent), files: fileActivity(records, session.agent, session.cwd), model: transcriptModel(records, session.agent), truncated };
         const claude = session.agent === 'claude';
         cached = { key, value, stops: claude ? taskStops(records) : new Map(), commands: claude ? backgroundCommands(records) : [] };
         this.cache.set(session.id, cached);
@@ -341,7 +420,7 @@ export class ConversationTranscripts {
       if (!read) return { supported: false, messages: [] };
       if (read.key === cached?.key) return cached.value;
       const messages = transcriptMessages(read.records, 'opencode', Infinity);
-      const value = { supported: true, messages: messages.slice(-100), userMessages: messages.filter(item => item.role === 'user').length, activity: transcriptActivity(read.records, 'opencode'), model: transcriptModel(read.records, 'opencode'), truncated: read.truncated };
+      const value = { supported: true, messages: messages.slice(-pageSize), hasOlder: read.truncated || messages.length > pageSize, userMessages: messages.filter(item => item.role === 'user').length, activity: transcriptActivity(read.records, 'opencode'), model: transcriptModel(read.records, 'opencode'), truncated: read.truncated };
       this.cache.set(session.id, { key: read.key, value });
       if (this.cache.size > 25) this.cache.delete(this.cache.keys().next().value);
       return value;

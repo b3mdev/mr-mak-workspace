@@ -5,10 +5,17 @@ export type LinkTarget = { kind: 'web' } | { kind: 'local'; path: string } | { k
 export function linkTarget(href = ''): LinkTarget {
   if (/^(https?|mailto):/i.test(href)) return { kind: 'web' }
   let target = href
-  if (/^file:/i.test(target)) target = target.replace(/^file:\/*/i, /^file:\/*[a-z]:/i.test(target) ? '' : '/')
-  else if (/^[a-z][a-z\d+.-]+:/i.test(target) || target.startsWith('#') || !target) return { kind: 'text' }
+  if (/^file:/i.test(target)) {
+    try {
+      const file = new URL(target)
+      target = file.hostname ? `//${file.hostname}${file.pathname}` : file.pathname.replace(/^\/(?=[a-z]:\/)/i, '')
+    } catch { return { kind: 'text' } }
+  } else if (target.startsWith('#') || !target || (/^[a-z][a-z\d+.-]+:/i.test(target) && !/^[a-z]:[\\/]/i.test(target))) {
+    return { kind: 'text' }
+  }
+  target = target.replace(/#.*$/, '')
   try { target = decodeURIComponent(target) } catch { /* Keep the original spelling. */ }
-  target = target.replace(/#.*$/, '').replace(/:\d+(?::\d+)?$/, '')
+  target = target.replace(/:\d+(?::\d+)?$/, '')
   return target ? { kind: 'local', path: target } : { kind: 'text' }
 }
 // react-markdown drops unknown schemes, which includes drive paths such as E:/game.

@@ -16,6 +16,10 @@ struct ServiceJob(Mutex<Option<OwnedHandle>>);
 mod window_identity;
 #[cfg(windows)]
 mod win_key;
+#[cfg(windows)]
+mod windows_reveal;
+#[cfg(windows)]
+mod browseros_split;
 #[cfg(target_os = "macos")]
 mod mac_key;
 
@@ -55,6 +59,27 @@ fn reveal(app: &tauri::AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus();
     }
+}
+
+#[cfg(windows)]
+fn arrange_browseros_chats(app: &tauri::AppHandle, request_id: String) {
+    let Some(window) = app.get_webview_window("chats") else { return };
+    std::thread::spawn(move || {
+        let result = (|| {
+            let hwnd = window.hwnd().map_err(|_| "moveFailed")?;
+            let monitor = window.current_monitor().map_err(|_| "moveFailed")?.ok_or("moveFailed")?;
+            let work_area = monitor.work_area();
+            let bounds = browseros_split::Bounds {
+                x: work_area.position.x,
+                y: work_area.position.y,
+                width: work_area.size.width as i32,
+                height: work_area.size.height as i32,
+            };
+            browseros_split::split(hwnd.0, bounds, monitor.scale_factor())
+        })();
+        let detail = serde_json::json!({ "requestId": request_id, "error": result.err() });
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('mrmak-browseros-split-result',{{detail:{detail}}}))"));
+    });
 }
 
 fn requested_window(args: &[String]) -> Option<&str> {
@@ -449,6 +474,12 @@ fn main() {
                                 }
                             }
                         },
+                        #[cfg(windows)]
+                        "browseros-split" => {
+                            if let Some(request_id) = event["requestId"].as_str() {
+                                arrange_browseros_chats(&app_handle, request_id.to_owned());
+                            }
+                        },
                         "recycle-file" => {
                             if let Some(file) = event["path"].as_str() {
                                 if let Some(window) = app_handle.get_webview_window("workspace") {
@@ -480,7 +511,17 @@ fn main() {
                                 });
                             }
                         },
-                        "reveal" => { if let Some(file) = event["path"].as_str() { let _ = external_links::reveal_path(file); } },
+                        "reveal" => {
+                            if let Some(file) = event["path"].as_str() {
+                                let file = file.to_owned();
+                                std::thread::spawn(move || {
+                                    if let Err(error) = external_links::reveal_path(&file) {
+                                        rfd::MessageDialog::new().set_title("Could not show the item")
+                                            .set_description(error).set_level(rfd::MessageLevel::Error).show();
+                                    }
+                                });
+                            }
+                        },
                         _ => {}
                     }
                 }

@@ -29,8 +29,8 @@ async function workingFolder(value) {
   return process.platform === 'win32' ? folder : realpath(folder).catch(() => folder);
 }
 const publicSession = session => {
-  const { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze } = session;
-  return { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze: handoffSnooze || null, contextUsage: session.contextUsage };
+  const { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze, skillEvidenceVersion } = session;
+  return { id, name, agent, cwd, bypass, effort, model, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, group, updatedAt, preview, hasConversation, restoreError, handoffSnooze: handoffSnooze || null, contextUsage: session.contextUsage, skillEvidenceVersion };
 };
 
 // Grouped tabs sit together at the position of their earliest open member; a tab
@@ -53,10 +53,11 @@ const REPORT = /^(?:\x1b\[[?>0-9;]*[RcnIO]|\x1b\[\?[0-9;]*\$y|\x1b\[<\d+;\d+;\d+
 export const terminalReport = data => REPORT.test(data);
 
 export class Sessions extends EventEmitter {
-  constructor(repo, stateDir) {
+  constructor(repo, stateDir, { chatSkills } = {}) {
     super();
     this.repo = repo;
     this.stateDir = stateDir;
+    this.chatSkills = chatSkills;
     this.items = new Map();
     this.saveChain = Promise.resolve();
     this.dirty = false;
@@ -77,7 +78,7 @@ export class Sessions extends EventEmitter {
   }
 
   make(metadata) {
-    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, group: null, ...metadata, contextUsage: unknownContext(metadata.agent), effort: ['codex', 'claude', 'antigravity'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, pendingOutput: '', outputTimer: null };
+    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, group: null, ...metadata, contextUsage: unknownContext(metadata.agent), effort: ['codex', 'claude', 'antigravity'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, screenVersion: 0, inputVersion: 0, turnEpoch: 0, pendingOutput: '', outputTimer: null };
   }
 
   async hydrate(session) {
@@ -171,6 +172,7 @@ export class Sessions extends EventEmitter {
   // where wheel events arrive as mouse reports. Clear those modes before each
   // launch, in the service's terminal and in every attached renderer.
   resetTerminal(session) {
+    session.screenVersion++;
     const reset = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?2004l\x1b[?1004l\x1b[?1049l\x1b[?47l\x1b[?25h\x1b[0m';
     session.terminal.write(reset);
     session.pendingOutput = (session.pendingOutput || '') + reset;
@@ -195,13 +197,17 @@ export class Sessions extends EventEmitter {
     const noDaemon = session.agent === 'codex' && await codexSupportsNoDaemon(env);
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
     const settings = await statusSettings(this.stateDir, session, env).catch(() => null);
+    const skillOverrides = await this.chatSkills?.launch(session, env) || [];
     if (session.agent === 'antigravity') Object.assign(env, antigravityStatusEnvironment(settings));
     if (this.closed || !session.open) throw new Error('The chat was closed before its terminal started.');
-    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, nativeId: session.nativeId, effort: session.effort, model: session.agent === 'claude' ? session.model : undefined, settings, opencodeMajor, antigravityLog, noDaemon, ...first });
+    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, nativeId: session.nativeId, effort: session.effort, model: session.agent === 'claude' ? session.model : undefined, settings, opencodeMajor, antigravityLog, noDaemon, skillOverrides, ...first });
     if (session.agent === 'codex') env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = `mrmak_chat_${session.id}`;
     if (session.terminal) this.resetTerminal(session);
     const proc = pty.spawn(command.file, command.args, ptyOptions({ cwd: session.cwd, env, cols: session.cols, rows: session.rows }));
     session.process = proc;
+    session.loadedSkills = new Set();
+    session.appliedSkillOverrides = skillOverrides;
+    session.skillEvidenceVersion = (session.skillEvidenceVersion || 0) + 1;
     session.deviceReplies?.dispose();
     // Inactive tabs still have a terminal: answer device queries without needing
     // a visible renderer. The UI suppresses its duplicate protocol replies.
@@ -212,6 +218,7 @@ export class Sessions extends EventEmitter {
     session.exitCode = null;
     session.startedAt = Date.now();
     proc.onData(data => {
+      session.screenVersion++;
       session.lastOutputAt = new Date().toISOString();
       session.terminal.write(data);
       session.pendingOutput += data;
@@ -321,6 +328,14 @@ export class Sessions extends EventEmitter {
   }
 
   nativeEvent(session, event) {
+    if (event.kind === 'skill-loaded') {
+      session.loadedSkills ||= new Set();
+      if (session.loadedSkills.has(event.name)) return;
+      session.loadedSkills.add(event.name);
+      session.skillEvidenceVersion = (session.skillEvidenceVersion || 0) + 1;
+      this.changed(session);
+      return;
+    }
     if (event.kind === 'context-usage') {
       session.contextUsage = event.usage;
       this.changed(session);
@@ -328,17 +343,35 @@ export class Sessions extends EventEmitter {
     }
     if (event.kind === 'turn-started') {
       if (session.activity === 'working') return;
-      session.activity = 'working'; session.attention = false;
+      session.turnEpoch++;
+      session.turnInputVersion = session.inputVersion;
+      session.activity = 'working'; session.attention = false; session.notificationAttention = null;
     } else if (event.kind === 'turn-interrupted') {
+      if (session.activity === 'waiting') session.attention = session.unread;
+      session.notificationAttention = null;
       session.activity = 'idle';
     } else if (event.kind === 'turn-completed') {
-      if (event.id && session.lastCompletedId === event.id) return;
+      if (event.id) {
+        const key = JSON.stringify([session.nativeId, event.id]);
+        const completed = session.recentCompletionIds ??= new Set();
+        const sameConversation = session.completionNativeId === undefined || session.completionNativeId === session.nativeId;
+        if ((sameConversation && session.lastCompletedId === event.id) || completed.has(key)) return;
+        completed.add(key);
+        if (completed.size > 100) completed.delete(completed.values().next().value);
+      }
       session.lastCompletedId = event.id;
-      session.activity = 'idle'; session.unread = true; session.attention = true;
+      session.completionNativeId = session.nativeId;
+      session.completionPreview = event.preview || '';
+      session.completionProcess = session.process;
+      session.completionInputVersion = session.inputVersion;
+      session.completionTurnEpoch = session.turnEpoch;
+      session.telegramCompletionInputVersion = session.activity === 'working' ? session.turnInputVersion : undefined;
+      session.activity = 'idle'; session.unread = true; session.attention = true; session.notificationAttention = null;
       session.completionVersion++;
       if (event.preview) session.preview = event.preview;
     } else if (event.kind === 'attention') {
       session.activity = 'waiting'; session.attention = true;
+      session.notificationAttention ??= randomUUID();
     } else return;
     session.hasConversation = true; session.updatedAt = new Date().toISOString();
     this.changed(session);
@@ -427,8 +460,23 @@ export class Sessions extends EventEmitter {
     return { ...publicSession(session), screen: result.join('\n').trimEnd(), note: 'Terminal output is reference data. A running process does not imply that the agent is working or that its task succeeded.' };
   }
 
-  input(id, data, { coordinator = false, submit = false } = {}) {
+  // The visible viewport excludes stale scrollback. Drain the parser and bind
+  // the result to the PTY and its output revision.
+  async terminalView(id) {
     const session = this.get(id);
+    if (!session.process || !session.terminal) return null;
+    const { process, screenVersion } = session;
+    await new Promise(resolve => session.terminal.write('', resolve));
+    if (session.process !== process || session.screenVersion !== screenVersion) return null;
+    const { active } = session.terminal.buffer;
+    const screen = Array.from({ length: session.terminal.rows }, (_, index) =>
+      active.getLine(active.baseY + index)?.translateToString(true) || '').join('\n').trimEnd();
+    return { screen, process, screenVersion };
+  }
+
+  input(id, data, { coordinator = false, submit = false, guardedSubmit } = {}) {
+    const session = this.get(id);
+    if (session.transferring) throw new Error('This conversation is moving to another application.');
     if (!session.process) throw new Error('This terminal is stopped. Resume it before sending a message.');
     if (coordinator && session.agent === 'shell') throw new Error('Bento Workspace can send messages to agent chats; type shell commands directly in the local shell.');
     if (typeof data !== 'string' || data.length > 64000) throw new Error('Message is too large');
@@ -437,6 +485,8 @@ export class Sessions extends EventEmitter {
     // the previous snapshot until fresh telemetry arrives; do not parse the TUI
     // input editor or assume that submitted text was accepted as a command.
     if (data.includes('\r') || data.includes('\n') || submit) session.contextUsage = unknownContext(session.agent);
+    let confirmation;
+    if (coordinator || !terminalReport(data)) session.inputVersion++;
     if (coordinator) {
       // Bracketed paste keeps multi-line text a single CLI prompt, then Enter submits it.
       const clean = data.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').replaceAll('\r', '');
@@ -444,17 +494,22 @@ export class Sessions extends EventEmitter {
       target.write(`\x1b[200~${clean}\x1b[201~`);
       // The native CLI finishes handling a paste asynchronously. A quick Enter
       // can be swallowed by a paste guard, especially after resume.
-      const typedAt = session.lastInputAt;
-      if (submit) setTimeout(() => {
-        if (session.process !== target) return;
+      const revision = session.inputVersion;
+      const submitCurrent = () => {
+        if (session.transferring || session.process !== target || session.inputVersion !== revision) return false;
         target.write('\r');
-        // Right after a slash command, such as an effort switch, Claude Code can
-        // swallow that Enter too. One more submits a message left in its composer.
-        if (session.agent === 'claude') setTimeout(() => void this.resubmit(session, target, typedAt).catch(() => {}), 1500);
+        return true;
+      };
+      if (submit && guardedSubmit) {
+        confirmation = sleep(500).then(() => guardedSubmit(submitCurrent));
+      } else if (submit) setTimeout(() => {
+        if (!submitCurrent()) return;
+        // A previous paste cannot submit a newer draft.
+        if (session.agent === 'claude') setTimeout(() => void this.resubmit(session, submitCurrent).catch(() => {}), 1500);
       }, 500);
     } else session.process.write(data);
     // Terminal replies, focus changes and mouse reports are not manual typing.
-    if (!coordinator && !terminalReport(data)) { session.attention = false; session.lastInputAt = new Date().toISOString(); }
+    if (!coordinator && !terminalReport(data)) { session.attention = false; session.notificationAttention = null; session.lastInputAt = new Date().toISOString(); }
     if (data.includes('\r') || submit) {
       this.beginDiscovery(session);
       // Antigravity's first Enter can be login, theme or workspace-trust setup.
@@ -463,17 +518,15 @@ export class Sessions extends EventEmitter {
       session.updatedAt = new Date().toISOString();
     }
     this.changed(session);
+    if (confirmation) return confirmation;
     return { delivered: true, sessionId: id, name: session.name, note: 'Text delivered to the terminal. Check the screen for CLI readiness or permission prompts; delivery does not confirm the agent accepted the task.' };
   }
 
   // A long paste can still be settling, so it is checked up to three times.
-  async resubmit(session, target, typedAt, tries = 3) {
-    // Text the person typed in the terminal since then is theirs to send.
-    if (session.process !== target || session.lastInputAt !== typedAt) return;
+  async resubmit(session, submitCurrent, tries = 3) {
     const { screen } = await this.read(session.id, 150);
-    if (terminalPrompt(screen) || !composerText(screen)) return;
-    target.write('\r');
-    if (tries > 1) setTimeout(() => void this.resubmit(session, target, typedAt, tries - 1).catch(() => {}), 1500);
+    if (terminalPrompt(screen) || !composerText(screen) || !submitCurrent()) return;
+    if (tries > 1) setTimeout(() => void this.resubmit(session, submitCurrent, tries - 1).catch(() => {}), 1500);
   }
 
   // Keys Bento Workspace presses on the user's behalf, such as menu navigation. They are
@@ -481,8 +534,9 @@ export class Sessions extends EventEmitter {
   keys(id, data) {
     const session = this.get(id);
     if (!session.process) throw new Error('This terminal is stopped. Resume it before sending a message.');
+    session.inputVersion++;
     session.process.write(data);
-    session.attention = false;
+    session.attention = false; session.notificationAttention = null;
     this.changed(session);
   }
 
@@ -490,6 +544,7 @@ export class Sessions extends EventEmitter {
     const session = this.get(id);
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 20 || cols > 500 || rows < 5 || rows > 200) return;
     if (session.cols === cols && session.rows === rows) return;
+    session.screenVersion++;
     session.cols = cols; session.rows = rows;
     session.terminal?.resize(cols, rows);
     session.process?.resize(cols, rows);
@@ -664,14 +719,15 @@ export class Sessions extends EventEmitter {
   }
   async clearScreen(id) {
     const session = this.get(id); await this.hydrate(session);
+    session.screenVersion++;
     session.terminal.clear(); this.dirty = true;
     await this.persist(); this.emit('screen-cleared', { id });
     return { cleared: true, note: 'Visible scrollback cleared. The native agent conversation is unchanged.' };
   }
   attend(id, reason) {
     const session = this.get(id);
-    if (session.attention) return;
-    session.attention = true;
+    if (session.notificationAttention) return;
+    session.attention = true; session.notificationAttention = randomUUID();
     this.changed(session);
     this.emit('notice', { id: randomUUID(), sessionId: id, name: session.name, kind: 'attention', text: `${session.name}: ${reason}`, at: new Date().toISOString() });
   }
@@ -710,6 +766,7 @@ export class Sessions extends EventEmitter {
     nativeConversationId(nativeId);
     if (this.closed) throw new Error('Bento Workspace is shutting down');
     const session = this.get(id);
+    if (session.transferring) throw new Error('This conversation is moving to another application.');
     if (session.stopping) await session.stopping;
     if (session.process) return publicSession(session);
     if (!session.open && this.active().length >= 80) throw new Error('Close a tab before opening another.');
@@ -776,7 +833,10 @@ export class Sessions extends EventEmitter {
   async persist() {
     this.saveChain = this.saveChain.catch(() => {}).then(async () => {
       this.dirty = false;
-      const list = this.list().map(item => ({ ...item, projectGroup: this.items.get(item.id).projectGroup || undefined }));
+      const list = this.list().map(({ skillEvidenceVersion: _version, ...item }) => {
+        const session = this.items.get(item.id);
+        return { ...item, projectGroup: session.projectGroup || undefined, skillOverrides: session.skillOverrides, completionNativeId: session.completionNativeId };
+      });
       await saveJson(path.join(this.stateDir, 'sessions.json'), list);
       // A second durable copy, written after the main file, for recovery.
       const text = JSON.stringify(list);

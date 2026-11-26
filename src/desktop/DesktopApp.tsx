@@ -29,9 +29,8 @@ export default function DesktopApp() {
   const errorText = state.error ? serviceMessage(state.error) : null
   if (!state.ready) return <div className="desktop-boot"><MakLogo size={70} variant={surface} /><h1>{t('brand.name')}</h1><p>{errorText || t('desktop.openingWorkspace')}</p>{errorText && <button className="desk-secondary" onClick={() => startDesktop()}>{t('common.reconnect')}</button>}</div>
   return <div className={`desktop-root ${surface}-root`}>
-    {surface === 'chats' ? <Suspense fallback={<div className="desktop-boot"><MakLogo size={50} variant="chats" /></div>}><Chats /></Suspense> : <><div className="workspace-surface"><App />{state.preview && <FilePreview file={state.preview} />}</div><FilesRail /></>}
+    {surface === 'chats' ? <Suspense fallback={<div className="desktop-boot"><MakLogo size={50} variant="chats" /></div>}><Chats /></Suspense> : <><div className="workspace-surface"><App />{state.preview && <FilePreview file={state.preview} />}</div><FilesRail /><VoiceDock /></>}
     {errorText && <div className="desktop-error" role="alert"><span>{errorText}</span><button onClick={dismissError} aria-label={t('desktop.dismissError')}><Icon name="close" size={16} /></button></div>}
     {!state.connected && <div className="desktop-offline">{t('desktop.reconnectingService')}</div>}
-    <VoiceDock />
   </div>
 }

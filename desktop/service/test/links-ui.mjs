@@ -1,8 +1,9 @@
 // Isolated fake chats and local documents. No production session is touched.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { expect } from '@playwright/test';
 import { createService } from '../server.mjs';
 import { launchBrowser, desktopAuth } from './browser.mjs';
 
@@ -34,10 +35,17 @@ await writeFile(path.join(repo, 'workspace/test/report.html'), `<!doctype html><
 await writeFile(path.join(repo, 'workspace/test/notes.md'), `# Link notes\n\n[Markdown web link](${external})\n`);
 await writeFile(path.join(repo, 'workspace/test/image.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><text id="origin" y="20">waiting</text><script>document.getElementById("origin").textContent = self.origin</script></svg>');
 await writeFile(path.join(repo, 'workspace/workspace.json'), JSON.stringify({ entities: [{ id: 'test', folder: 'test', title: 'Links', category: 'dev', created: '2026-09-22', status: 'active', steps: [{ name: 'Report', path: 'report.html' }, { name: 'Notes', path: 'notes.md' }] }] }));
-const service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: path.join(repo, 'fake-home'), env: {} } });
+const deliveryFolder = await mkdtemp(path.join(root, '.cache/Entrega fora do chat '));
+const delivery = path.join(deliveryFolder, 'Calçada, céu & pôr do sol #2.psd');
+await writeFile(delivery, 'Fixture');
+const nativeEvents = [];
+const service = await createService({ repo, uiDir: path.join(root, 'dist'), native: event => nativeEvents.push(event), mcpOptions: { home: path.join(repo, 'fake-home'), env: {} } });
 const session = service.sessions.make({ id: 'links', name: 'Link fixture', agent: 'codex', cwd: repo, status: 'running', open: true, cols: 80, rows: 30 });
 service.sessions.items.set(session.id, session); await service.sessions.hydrate(session);
 session.process = { write() {}, resize() {}, kill() {} };
+const markdownPath = delivery.replaceAll('\\', '/').replaceAll('#', '%23');
+service.mobile.transcripts.read = async () => ({ supported: true, messages: [{ id: 'delivery', role: 'assistant', at: '', text:
+  `[Absolute Markdown delivery](<${markdownPath}>)\n\n[File URL delivery](${pathToFileURL(delivery).href})` }] });
 let browser;
 try {
   browser = await launchBrowser();
@@ -102,8 +110,22 @@ try {
   await terminalLink(external, 'https://browser-check.example/page', external);
   await terminalLink(wrapped, 'https://browser-check.example/wrapped', wrapped);
   await terminalLink(`\x1b]8;;${external}\x07Agent citation\x1b]8;;\x07`, 'Agent citation', external);
+  const workspace = await context.newPage();
+  await workspace.goto(service.urls.workspace);
+  await workspace.getByRole('heading', { name: 'Projects', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+  for (const label of ['Absolute Markdown delivery', 'File URL delivery']) {
+    await page.getByRole('link', { name: label }).click();
+    const reveal = workspace.locator('.file-unsupported button');
+    await expect(reveal).toHaveText(/Show in/);
+    const count = nativeEvents.length;
+    await reveal.click();
+    const expected = await realpath(delivery);
+    await expect.poll(() => nativeEvents.slice(count).find(event => event.type === 'reveal')?.path).toBe(expected);
+    await workspace.getByRole('button', { name: 'Close file preview', exact: true }).click();
+  }
   assert.deepEqual(errors, []);
-  console.log('Links UI passed: plain and wrapped terminal URLs, OSC 8 citations with mouse tracking, Markdown and HTML popups; local sections and download links preserved.');
+  console.log('Links UI passed: browser links, terminal citations, Markdown and file URL delivery previews, and exact native reveal paths.');
 } finally {
   await browser?.close(); session.process = null; await service.close();
 }

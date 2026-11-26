@@ -24,22 +24,24 @@ export async function readJsonFile(file) {
 }
 const jsonSaves = new Map();
 export async function saveJson(file, value, { beforeReplace } = {}) {
-  const data = JSON.stringify(value, null, 2) + '\n';
+  return saveText(file, JSON.stringify(value, null, 2) + '\n', { beforeReplace });
+}
+export async function saveText(file, data, { beforeReplace, mode = 0o600 } = {}) {
   const resolved = path.resolve(file);
   const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
   // A delayed retry must not overwrite a newer save to the same destination.
-  const saving = (jsonSaves.get(key) || Promise.resolve()).catch(() => {}).then(() => writeJson(file, data, beforeReplace));
+  const saving = (jsonSaves.get(key) || Promise.resolve()).catch(() => {}).then(() => writeAtomic(file, data, beforeReplace, mode));
   jsonSaves.set(key, saving);
   try { await saving; }
   finally { if (jsonSaves.get(key) === saving) jsonSaves.delete(key); }
 }
-async function writeJson(file, data, beforeReplace) {
+async function writeAtomic(file, data, beforeReplace, mode) {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomBytes(5).toString('hex')}.tmp`;
   try {
     // Flush the contents before the rename. Otherwise a power cut can keep the
     // rename but lose the data, leaving a zero-filled file in place of the old one.
-    const handle = await open(temp, 'w', 0o600);
+    const handle = await open(temp, 'wx', mode);
     try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
     // Windows can briefly deny replacement while a reader or scanner holds the
     // destination. Keep the previous file intact and retry the atomic rename.

@@ -21,7 +21,8 @@ import { useT, type MessageKey } from '../lib/i18n'
 
 interface ToolActivity { id: string; name: string; status: 'running' | 'completed' | 'failed'; at: string }
 interface Message { id: string; role: 'user' | 'assistant' | 'system'; text: string; at: string; images?: ConversationImage[]; event?: SystemEventData }
-interface Transcript { supported: boolean; messages: Message[]; activity?: ToolActivity[]; agents?: WorkingAgent[]; commands?: BackgroundCommand[]; truncated?: boolean; prompt?: TerminalPromptData | null }
+interface Transcript { supported: boolean; messages: Message[]; activity?: ToolActivity[]; agents?: WorkingAgent[]; commands?: BackgroundCommand[]; hasOlder?: boolean; historyLoaded?: boolean; nativeId?: string | null; prompt?: TerminalPromptData | null }
+interface EarlierPage { messages: Message[]; hasOlder: boolean; replace?: boolean; stale?: boolean }
 interface Draft { text: string; paths: string[] }
 
 const toolStatusKeys: Record<ToolActivity['status'] | 'interrupted', MessageKey> = {
@@ -62,9 +63,13 @@ function CopyButton({ text }: { text: string }) {
   return <button type="button" className="conversation-copy" title={t('conv.copyMessage')} aria-label={copied ? t('common.copied') : t('conv.copyMessage')} onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1400) }).catch(reportError)}><Icon name="copy" size={14} />{copied && <span>{t('common.copied')}</span>}</button>
 }
 
-export default function Conversation({ session, connected, agentLabel, openTerminal, systemEvents = 'compact' }: { session: ChatSession; connected: boolean; agentLabel: string; openTerminal: () => void; systemEvents?: SystemEventsMode }) {
+export default function Conversation({ session, connected, agentLabel, openTerminal, systemEvents = 'compact' }: { session: ChatSession; connected: boolean; agentLabel: string; openTerminal?: () => void; systemEvents?: SystemEventsMode }) {
   const { t, time, serviceMessage } = useT()
+  const readOnly = !openTerminal
   const [transcript, setTranscript] = useState<Transcript | null>(null)
+  const [historyBusy, setHistoryBusy] = useState(false), [historyError, setHistoryError] = useState('')
+  const scrollAnchor = useRef<{ height: number; top: number } | null>(null)
+  const firstVisible = useRef<string | undefined>(undefined)
   const [readFailed, setReadFailed] = useState(false)
   const [changedAt, setChangedAt] = useState(() => Date.now()), [now, setNow] = useState(() => Date.now())
   const fingerprint = useRef('')
@@ -74,14 +79,14 @@ export default function Conversation({ session, connected, agentLabel, openTermi
   const [sending, setSending] = useState(false), [uploading, setUploading] = useState(false), [voiceBusy, setVoiceBusy] = useState(false), [status, setStatus] = useState('')
   const [dragging, setDragging] = useState(false)
   const { info: dictation } = useDictation()
-  const running = session.status === 'running', working = running && session.activity === 'working'
+  const running = !readOnly && session.status === 'running', working = running && session.activity === 'working'
   const reload = useRef<() => Promise<void>>(async () => {})
   const speech = useReadAloud(session.id, speakDesktopText), stopReading = speech.stop
   const [voice, setVoice] = useState(savedReadingVoice)
   const [answering, setAnswering] = useState(false)
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null), [rewinding, setRewinding] = useState(false), [editError, setEditError] = useState('')
   const [commands, setCommands] = useState<ChatCommand[]>([]), [caret, setCaret] = useState(0), [picked, setPicked] = useState(0), [dismissed, setDismissed] = useState('')
-  useEffect(() => { api<{ commands: ChatCommand[] }>(`/sessions/${session.id}/commands`).then(value => setCommands(value.commands)).catch(() => setCommands([])) }, [session.id])
+  useEffect(() => { if (!readOnly) api<{ commands: ChatCommand[] }>(`/sessions/${session.id}/commands`).then(value => setCommands(value.commands)).catch(() => setCommands([])) }, [session.id, readOnly])
   const token = commandToken(draft.text, caret, session.agent === 'codex')
   const tokenKey = token ? `${token.start}:${token.trigger}${token.query}` : ''
   const suggestions = token && tokenKey !== dismissed ? matchingCommands(commands, token) : []
@@ -93,7 +98,7 @@ export default function Conversation({ session, connected, agentLabel, openTermi
     requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(next.caret, next.caret) })
   }
 
-  useEffect(() => { saveDraft(session.id, draft) }, [draft, session.id])
+  useEffect(() => { if (!readOnly) saveDraft(session.id, draft) }, [draft, session.id, readOnly])
   useEffect(() => {
     let stopped = false, busy = false
     const load = async () => {
@@ -104,7 +109,17 @@ export default function Conversation({ session, connected, agentLabel, openTermi
         if (stopped) return
         const at = Date.now(), next = JSON.stringify(result.messages)
         if (next !== fingerprint.current) { fingerprint.current = next; setChangedAt(at) }
-        setTranscript(result); setReadFailed(false); setNow(at)
+        setTranscript(current => {
+          const recent = { ...result, nativeId: session.nativeId }
+          if (!current?.historyLoaded || current.nativeId !== session.nativeId) return recent
+          if (!result.messages.length) {
+            return result.hasOlder ? { ...recent, messages: current.messages, historyLoaded: true, hasOlder: current.hasOlder } : recent
+          }
+          const overlap = current.messages.findIndex(message => message.id === result.messages[0].id)
+          if (overlap < 0) return recent
+          return { ...recent, messages: [...current.messages.slice(0, overlap), ...result.messages], historyLoaded: true, hasOlder: current.hasOlder }
+        })
+        setReadFailed(false); setNow(at)
       } catch { if (!stopped) { setReadFailed(true); setNow(Date.now()) } }
       finally { busy = false }
     }
@@ -114,8 +129,28 @@ export default function Conversation({ session, connected, agentLabel, openTermi
     const visible = () => { if (document.visibilityState === 'visible') void load() }
     document.addEventListener('visibilitychange', visible)
     return () => { stopped = true; clearInterval(timer); document.removeEventListener('visibilitychange', visible) }
-  }, [session.id, session.completionVersion, session.activity])
+  }, [session.id, session.nativeId, session.completionVersion, session.activity])
   const messages = transcript?.messages || []
+  async function loadEarlier() {
+    const before = messages[0]?.id
+    if (historyBusy) return
+    setHistoryBusy(true); setHistoryError('')
+    try {
+      const cursor = before ? `?before=${encodeURIComponent(before)}` : ''
+      const page = await api<EarlierPage>(`/sessions/${session.id}/earlier${cursor}`)
+      if (page.stale) throw new Error(t('conv.historyUnavailable'))
+      if (firstVisible.current !== before) return
+      const box = scroller.current
+      if (box && page.messages.length && !page.replace) scrollAnchor.current = { height: box.scrollHeight, top: box.scrollTop }
+      follow.current = false
+      setTranscript(current => {
+        if (!current || current.messages[0]?.id !== before) return current
+        return { ...current, messages: page.replace ? page.messages : [...page.messages, ...current.messages], hasOlder: page.hasOlder, historyLoaded: true }
+      })
+    } catch (error) {
+      setHistoryError(serviceMessage(error instanceof Error ? error.message : String(error)))
+    } finally { setHistoryBusy(false) }
+  }
   let readStart = 0
   for (let index = 0; index < messages.length; index++) if (messages[index].role === 'user') readStart = index
   const latestUserId = messages[readStart]?.role === 'user' ? messages[readStart].id : null
@@ -134,7 +169,14 @@ export default function Conversation({ session, connected, agentLabel, openTermi
     catch (error) { reportError(error) }
     finally { setAnswering(false); void reload.current() }
   }
-  useLayoutEffect(() => { const box = scroller.current; if (box && follow.current) box.scrollTop = box.scrollHeight }, [messages.length, transcript, working])
+  useLayoutEffect(() => {
+    const box = scroller.current
+    firstVisible.current = transcript?.messages[0]?.id
+    const anchor = scrollAnchor.current
+    scrollAnchor.current = null
+    if (box && anchor) box.scrollTop = anchor.top + box.scrollHeight - anchor.height
+    else if (box && follow.current) box.scrollTop = box.scrollHeight
+  }, [transcript, working, historyBusy])
   useEffect(() => { input.current?.focus() }, [session.id])
   useLayoutEffect(() => {
     const box = input.current
@@ -158,6 +200,7 @@ export default function Conversation({ session, connected, agentLabel, openTermi
   const addPathsRef = useRef(addPaths)
   useEffect(() => { addPathsRef.current = addPaths })
   useEffect(() => {
+    if (readOnly) return
     let choosing = false
     const pick = async () => {
       if (choosing) return
@@ -177,7 +220,7 @@ export default function Conversation({ session, connected, agentLabel, openTermi
     window.addEventListener('mrmak-attach-file', pick)
     window.addEventListener('mrmak-file-drop', nativeDrop)
     return () => { window.removeEventListener('mrmak-attach-file', pick); window.removeEventListener('mrmak-file-drop', nativeDrop) }
-  }, [])
+  }, [readOnly])
 
   async function send() {
     const text = draft.text.trimEnd()
@@ -189,7 +232,7 @@ export default function Conversation({ session, connected, agentLabel, openTermi
       // can run. Clear the saved draft now so returning cannot resend it.
       saveDraft(session.id, { text: '', paths: [] })
       setDraft({ text: '', paths: [] }); setCaret(0); follow.current = true; setShowJump(false)
-      if (terminalCommand(commands, text)) openTerminal()
+      if (terminalCommand(commands, text)) openTerminal?.()
       void reload.current()
     } catch (error) { setStatus(t('conv.draftKept', { error: serviceMessage(error instanceof Error ? error.message : String(error)) })) }
     finally { setSending(false); input.current?.focus() }
@@ -219,7 +262,10 @@ export default function Conversation({ session, connected, agentLabel, openTermi
   return <div ref={area} className="desk-conversation">
     <div className="conversation-scroll" ref={scroller} onScroll={() => { const box = scroller.current; if (!box) return; const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 120; follow.current = nearEnd; setShowJump(!nearEnd) }}>
       <div className="conversation-column">
-        {transcript?.truncated && <p className="conversation-note">{t('conv.truncatedNote')}</p>}
+        {transcript?.hasOlder && <div className="conversation-history">
+          <button type="button" disabled={historyBusy} onClick={() => void loadEarlier()}><Icon name="up" size={14} />{t(historyBusy ? 'conv.loadingHistory' : 'conv.loadHistory')}</button>
+          {historyError && <p role="alert">{historyError}</p>}
+        </div>}
         {messages.map((message, index) => message.role === 'system' ? systemEvents !== 'hidden' && message.event && <SystemEvent key={`${message.id}:${systemEvents}`} event={message.event} time={message.at ? time(message.at) : undefined} expanded={systemEvents === 'full'}
           components={{ a: ({ href, children }) => <MessageLink href={href} sessionId={session.id}>{children}</MessageLink> }} fileLink={(file, label) => <MessageLink href={file} sessionId={session.id}>{label}</MessageLink>} />
         : <article key={message.id} data-index={index} className={`conversation-message ${message.role}`}>
@@ -252,18 +298,19 @@ export default function Conversation({ session, connected, agentLabel, openTermi
           <AgentLogo agent={session.agent} size={34} />
           <h2>{!transcript ? t('conv.loadingConversation') : unreadable ? t('conv.inTerminalTitle') : t('conv.readyTitle')}</h2>
           <p>{unreadable ? t('conv.unreadableDesc') : t('conv.emptyDesc', { agent: agentLabel })}</p>
-          <button type="button" onClick={openTerminal}><Icon name="terminal" size={15} />{t('conv.openTerminal')}</button>
+          {openTerminal && <button type="button" onClick={openTerminal}><Icon name="terminal" size={15} />{t('conv.openTerminal')}</button>}
         </div>}
         {!!transcript?.activity?.length && <details className="conversation-activity"><summary>{t('conv.recentToolActivity')}</summary>{transcript.activity.map(item => <div key={item.id}><Icon name={item.status === 'running' ? 'terminal' : item.status === 'failed' ? 'bell' : 'history'} size={13} /><span>{item.name}</span><small>{t(toolStatusKeys[item.status === 'running' && !running ? 'interrupted' : item.status])}{item.at && ` · ${time(item.at)}`}</small></div>)}</details>}
-        {transcript?.prompt && <TerminalPrompt prompt={transcript.prompt} answering={answering} onAnswer={choice => void answer(transcript.prompt!, choice)} onOpenTerminal={openTerminal} />}
+        {openTerminal && transcript?.prompt && <TerminalPrompt prompt={transcript.prompt} answering={answering} onAnswer={choice => void answer(transcript.prompt!, choice)} onOpenTerminal={openTerminal} />}
         {working && <p className="conversation-working"><i />{t('conv.agentWorking', { agent: agentLabel })}</p>}
-        {!transcript?.prompt && (session.activity === 'waiting' || stale || readError) && <div className="conversation-notice" role="status"><p>{readError || (session.activity === 'waiting' ? t('conv.agentWaiting', { agent: agentLabel }) : t('conv.staleNotice'))}</p><button type="button" onClick={openTerminal}><Icon name="terminal" size={14} />{t('conv.openTerminal')}</button></div>}
+        {readError && readOnly && <p className="conversation-notice" role="status">{readError}</p>}
+        {openTerminal && !transcript?.prompt && (session.activity === 'waiting' || stale || readError) && <div className="conversation-notice" role="status"><p>{readError || (session.activity === 'waiting' ? t('conv.agentWaiting', { agent: agentLabel }) : t('conv.staleNotice'))}</p><button type="button" onClick={openTerminal}><Icon name="terminal" size={14} />{t('conv.openTerminal')}</button></div>}
       </div>
     </div>
     {showJump && <button type="button" className="conversation-jump" onClick={() => { follow.current = true; setShowJump(false); const box = scroller.current; if (box) box.scrollTop = box.scrollHeight }}><Icon name="down" size={15} />{t('conv.latest')}</button>}
     {dragging && <div className="terminal-drop"><Icon name="attach" size={30} /><strong>{t('conv.dropToAttach')}</strong><span>{t('conv.filesFoldersImages')}</span></div>}
-    <BackgroundWork agents={transcript?.agents} commands={transcript?.commands} now={now} />
-    <form className="conversation-composer" onSubmit={event => { event.preventDefault(); void send() }}>
+    {!readOnly && <BackgroundWork agents={transcript?.agents} commands={transcript?.commands} now={now} />}
+    {!readOnly && <form className="conversation-composer" onSubmit={event => { event.preventDefault(); void send() }}>
       {!!suggestions.length && <ul className="conversation-commands" id="conversation-commands" role="listbox" aria-label={t('conv.commandsAria')}>{suggestions.map((command, index) => <li key={`${command.trigger}${command.name}`} id={`conversation-command-${index}`} role="option" aria-selected={command === highlighted}
         onMouseDown={event => { event.preventDefault(); complete(command) }} onMouseEnter={() => setPicked(index)}>
         <strong>{command.trigger}{command.name}</strong><span>{command.description}</span>{command.terminal && <Icon name="terminal" size={12} />}<small>{command.source}</small>
@@ -291,6 +338,6 @@ export default function Conversation({ session, connected, agentLabel, openTermi
         {working && <button type="button" className="conversation-stop" onClick={stop} title={t('conv.interruptTitle')}><Icon name="stop" size={14} />{t('conv.stop')}</button>}
         <button type="submit" className="conversation-send" aria-label={sending ? t('common.sending') : t('common.send')} title={t('common.send')} disabled={!connected || !running || sending || uploading || voiceBusy || (!draft.text.trim() && !draft.paths.length)}><Icon name="send" size={16} /></button>
       </div>
-    </form>
+    </form>}
   </div>
 }

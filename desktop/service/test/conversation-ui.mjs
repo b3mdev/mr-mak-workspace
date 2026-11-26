@@ -14,16 +14,16 @@ const repo = await mkdtemp(path.join(root, '.cache/conversation-ui-'));
 await mkdir(path.join(repo, 'workspace')); await mkdir(path.join(repo, '.mrmak'));
 await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
 const ids = ['conversation-a', 'conversation-b', 'conversation-claude'];
-await writeFile(path.join(repo, '.mrmak/sessions.json'), JSON.stringify(ids.map((id, tabOrder) => ({ id, tabOrder, name: `Review ${tabOrder + 1}`, agent: id === 'conversation-claude' ? 'claude' : 'codex', group: 'Game', cwd: repo, open: true, status: 'stopped', pinned: false, hasConversation: false, cols: 90, rows: 28, createdAt: '2026-10-18T08:00:00Z', updatedAt: '2026-10-18T08:00:00Z' }))));
+await writeFile(path.join(repo, '.mrmak/sessions.json'), JSON.stringify(ids.map((id, tabOrder) => ({ id, tabOrder, name: `Review ${tabOrder + 1}`, agent: id === 'conversation-claude' ? 'claude' : 'codex', group: 'Game', cwd: repo, open: true, status: 'stopped', pinned: false, hasConversation: false, ...(id === ids[0] ? { nativeId: '00000000-0000-4000-8000-000000000001' } : {}), cols: 90, rows: 28, createdAt: '2026-10-18T08:00:00Z', updatedAt: '2026-10-18T08:00:00Z' }))));
 let service, browser;
-const writes = [], errors = [];
+const writes = [], errors = [], nativeRequests = [];
 let command = 'echo first', option = 0, showPrompt = false, multiple = null, own = null;
 // Claude Code's multiple choice: boxed options, an unnumbered button, then Chat about this.
 const multipleScreen = () => ['│ Which fruits do you want?', '', ...['Apple', 'Banana', 'Grape', 'Type something'].map((label, i) => `${multiple.focus === i ? '❯' : ' '} ${i + 1}. [${multiple.checked[i] ? '✔' : ' '}] ${label}`), `${multiple.focus === 4 ? '❯' : ' '}    Next`, '──────────', `${multiple.focus === 5 ? '❯' : ' '} 5. Chat about this`, '', 'Enter to select · Tab/Arrow keys to navigate · Esc to cancel'].join('\n');
 // Claude Code's single choice with its own-answer option, as Claude Code draws it.
 const ownScreen = () => ['│ Which sound should the tree make?', '', ...['Generate in ElevenLabs', 'Keep the placeholder'].map((label, i) => `${own.focus === i ? '❯' : ' '} ${i + 1}. ${label}`), `${own.focus === 2 ? '❯' : ' '} 3. ${own.typed || 'Type something.'}`, '──────────', `${own.focus === 3 ? '❯' : ' '} 4. Chat about this`, '', `Enter to select · ↑/↓ to navigate${own.focus === 2 ? ' · ctrl+g to edit in Notepad' : ''} · Esc to cancel`].join('\n');
 try {
-  service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: repo, env: {} } });
+  service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: repo, env: {} }, native: event => nativeRequests.push(event) });
   service.sessions.launch = session => {
     session.status = 'running'; session.restoreError = null;
     session.process = { resize() {}, write(data) {
@@ -54,15 +54,44 @@ try {
   service.mobile.transcripts.read = async session => ({ supported: true, messages: [
     { id: 'user-1', role: 'user', text: `Review ${session.id}`, at: '2026-10-18T08:00:00Z' },
     { id: 'reply-1', role: 'assistant', text: '## Review ready\n\n**Verified** the character.\n\n[OpenAI](https://openai.com/)\n\n- Preserve the source\n- Review the result', at: '2026-10-18T08:00:10Z' },
-  ], activity: [] });
+  ], activity: [], hasOlder: session.id === ids[0] });
+  service.mobile.transcripts.older = async (_session, before) => {
+    assert.equal(before, 'user-1');
+    return { messages: [{ id: 'older-1', role: 'assistant', text: 'Earlier review note', at: '2026-10-18T07:59:00.000Z' }], hasOlder: false };
+  };
   const originalRead = service.sessions.read.bind(service.sessions);
   service.sessions.read = async (id, lines) => showPrompt && own ? { screen: ownScreen() } : showPrompt && multiple ? { screen: multipleScreen() } : showPrompt ? { screen: ['Allow command?', `$ ${command}`, '', ...['Yes, proceed', 'Yes, always', 'No'].map((label, i) => `${i === option ? '>' : ' '} ${i + 1}. ${label}`), 'Press enter to confirm'].join('\n') } : originalRead(id, lines);
   browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
   page.setDefaultTimeout(12000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.chats);
+  if (process.platform === 'win32') {
+    for (const width of [900, 390]) {
+      await page.setViewportSize({ width, height: 760 });
+      const split = page.getByRole('button', { name: 'Open BrowserOS neo beside Chats' });
+      const [response] = await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname === '/api/browseros/split'),
+        split.click(),
+      ]);
+      assert.equal(response.status(), 200);
+      const event = nativeRequests.filter(message => message.type === 'browseros-split').at(-1);
+      assert.ok(event?.requestId, 'the header button requests the native split');
+      await page.evaluate(requestId => window.dispatchEvent(new CustomEvent('mrmak-browseros-split-result', { detail: { requestId, error: 'missing' } })), event.requestId);
+      await expect(page.getByRole('alert')).toContainText('Install BrowserOS neo to use the side-by-side view.');
+      await page.getByRole('button', { name: 'Dismiss error' }).click();
+    }
+    await page.setViewportSize({ width: 900, height: 760 });
+  }
   await page.getByRole('button', { name: 'Conversation', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review ready' })).toBeVisible();
+  await page.getByRole('button', { name: 'Load earlier messages' }).click();
+  await expect(page.getByText('Earlier review note')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Load earlier messages' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continue outside Bento' }).click();
+  const transfer = page.getByRole('dialog', { name: 'Continue outside Bento' });
+  await expect(transfer.getByRole('button', { name: 'Open in Codex' })).toBeEnabled();
+  await expect(transfer.getByRole('link', { name: 'Open ChatGPT' })).toHaveAttribute('href', 'https://chatgpt.com/');
+  await transfer.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.locator('.conversation-copy-text strong')).toHaveText('Verified');
   await expect(page.getByRole('link', { name: 'OpenAI', exact: true })).toHaveAttribute('target', '_blank');
   const input = page.getByRole('combobox', { name: 'Message Codex' });
@@ -75,6 +104,14 @@ try {
   await page.waitForResponse(response => /\/api\/sessions\/[^/]+\/messages$/.test(new URL(response.url()).pathname));
   await page.waitForTimeout(100);
   assert.ok(await page.getByRole('link', { name: 'OpenAI', exact: true }).evaluate(node => node === window.historyLink), 'an unchanged transcript poll must preserve rendered history');
+  await expect(page.getByText('Earlier review note')).toBeAttached();
+  await page.getByRole('button', { name: /^History/ }).click();
+  await page.getByRole('button', { name: 'Read Review 1' }).click();
+  const saved = page.getByRole('dialog', { name: 'Review 1' });
+  await expect(saved.getByRole('heading', { name: 'Review ready' })).toBeVisible();
+  await expect(saved.getByRole('combobox', { name: 'Message Codex' })).toHaveCount(0);
+  await saved.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Close History' }).click();
   const historyRoute = '**/api/sessions/*/messages';
   await page.route(historyRoute, async route => {
     const response = await route.fetch(), value = await response.json();

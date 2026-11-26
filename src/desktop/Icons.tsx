@@ -41,6 +41,7 @@ export function Icon({ name, size = 18, style }: { name: string; size?: number; 
   const paths: Record<string, string> = {
     network: 'M9 3h6v5H9ZM3 16h6v5H3ZM15 16h6v5h-6ZM12 8v4M6 16v-4h12v4',
     computer: 'M3 4h18v12H3ZM12 16v4M8 20h8',
+    browserSplit: 'M3 5h18v14H3ZM11 5v14M11 9h10M14 7h.01M17 7h.01',
     grid: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
     list: 'M4 6h2m4 0h10M4 12h2m4 0h10M4 18h2m4 0h10',
     menu: 'M4 6h16M4 12h16M4 18h16',

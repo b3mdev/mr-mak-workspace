@@ -5,7 +5,7 @@ import { Icon, ListeningEar, Nose } from './Icons'
 import CoordinatorContext from './CoordinatorContext'
 import MakComposer from './MakComposer'
 import MakImages from './MakImages'
-import type { Operation, ServiceEvent } from './types'
+import type { BentoNotification, Operation, ServiceEvent } from './types'
 import { localizeEffort, useT } from '../lib/i18n'
 
 type ConversationAction = 'stop' | 'reset' | 'new'
@@ -20,13 +20,15 @@ export default function VoiceDock() {
   const state = useDesktop()
   const live = useSyncExternalStore(liveVoice.subscribe, liveVoice.snapshot)
   const [panel, setPanel] = useState(false)
-  const [tab, setTab] = useState<'conversation' | 'activity' | 'context'>('conversation')
+  const [tab, setTab] = useState<'conversation' | 'notifications' | 'context'>('conversation')
   const [sending, setSending] = useState(false)
   const [controlling, setControlling] = useState(false)
   const [feedback, setFeedback] = useState<ConversationAction | null>(null)
   const [controlError, setControlError] = useState('')
   const pending = useRef<{ controller: AbortController; revision: number } | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
+  const composer = useRef<HTMLTextAreaElement>(null)
+  const focusAfterReview = useRef(false)
   const { conversationId, contextRevision } = state.coordinatorConversation
   const previousVoice = state.voiceHistory[state.voiceHistory.length - 1]
   const active = ['live', 'connecting', 'closing'].includes(live.status)
@@ -42,7 +44,6 @@ export default function VoiceDock() {
   useEffect(() => onServiceEvent(event => {
     if (event.type === 'disconnected') liveVoice.disconnect()
     if (event.type === 'coordinator-stopped') pending.current?.controller.abort()
-    if (event.type === 'notice' && event.notice) liveVoice.announce(`Verified terminal event: ${event.notice.text}. Check the terminal to confirm the project result.`)
     if (['session', 'selection', 'connected'].includes(event.type)) liveVoice.context()
   }), [])
   useEffect(() => {
@@ -53,20 +54,33 @@ export default function VoiceDock() {
     if (panel && tab === 'conversation') bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [live.captions, state.operations, panel, tab])
 
+  useEffect(() => {
+    if (focusAfterReview.current && panel && tab === 'conversation' && !sending) {
+      focusAfterReview.current = false
+      composer.current?.focus()
+    }
+  }, [panel, tab, sending])
+
   function toggle() {
     if (active) liveVoice.stop()
     else { setPanel(true); setTab('conversation'); void liveVoice.start() }
   }
-  async function send(text: string, images: string[]) {
+  async function send(text: string, images: string[], itemId?: string) {
     const controller = new AbortController()
     pending.current = { controller, revision: contextRevision }
     setSending(true); setFeedback(null)
     try {
-      const result = await api<Operation>('/coordinator', { id: crypto.randomUUID(), text, images, selectedId: state.selectedId, contextRevision }, undefined, { signal: controller.signal })
+      const result = await api<Operation>(itemId ? '/notifications/review' : '/coordinator', { id: crypto.randomUUID(), text, images, itemId, selectedId: state.selectedId, contextRevision }, undefined, { signal: controller.signal })
       if (result.status !== 'completed') throw new Error(result.result || t('voice.requestFailed'))
     } finally {
       if (pending.current?.controller === controller) { pending.current = null; setSending(false) }
     }
+  }
+  async function review(item: BentoNotification) {
+    focusAfterReview.current = true
+    setTab('conversation'); setControlError('')
+    try { await send(t('notifications.review', { number: item.ref }), [], item.id) }
+    catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setControlError(String(error instanceof Error ? error.message : error)) }
   }
   async function control(action: ConversationAction) {
     setControlling(true); setControlError(''); setFeedback(null)
@@ -90,7 +104,7 @@ export default function VoiceDock() {
       <div className="voice-tabs">
         <button className={tab === 'conversation' ? 'selected' : ''} aria-pressed={tab === 'conversation'} onClick={() => setTab('conversation')}>{t('voice.tabConversation')}</button>
         <button className={tab === 'context' ? 'selected' : ''} aria-pressed={tab === 'context'} onClick={() => setTab('context')}>{t('voice.tabContext')}</button>
-        <button className={tab === 'activity' ? 'selected' : ''} aria-pressed={tab === 'activity'} onClick={() => setTab('activity')}>{t('voice.tabActivity')}{state.notices.length > 0 && <span>{state.notices.length}</span>}</button>
+        <button className={tab === 'notifications' ? 'selected' : ''} aria-pressed={tab === 'notifications'} onClick={() => setTab('notifications')}>{t('notifications.title')}{state.notifications.length > 0 && <span>{state.notifications.length}</span>}</button>
       </div>
       <div className="coordinator-actions">
         {(['new', 'reset', ...(working ? ['stop'] as const : [])] as const).map(action =>
@@ -113,6 +127,7 @@ export default function VoiceDock() {
             <p className="caption user"><span>{t('common.you')}</span>{operation.text}</p>
             {!!operation.images?.length && <MakImages paths={operation.images} />}
             <p className={`caption assistant ${operation.status !== 'completed' ? 'failed' : ''}`}><span>{t('brand.name')}</span>{operation.result ? serviceMessage(operation.result) : t('voice.working')}</p>
+            {operation.notificationDetail && <blockquote className="notification-detail"><small>{t('notifications.origin')}</small><span>{operation.notificationDetail}</span></blockquote>}
           </div>)}
           {!live.captions.length && previousVoice && <details className="previous-voice"><summary>{t('voice.previousVoice')}</summary>{previousVoice.captions.map((caption, index) =>
             <p key={index} className={`caption ${caption.role}`}><span>{caption.role === 'user' ? t('common.you') : t('brand.name')}</span>{caption.text}</p>)}</details>}
@@ -120,17 +135,29 @@ export default function VoiceDock() {
           {working && <p className="voice-working"><i /><i /><i />{t('voice.checkingWorkspace')}</p>}
           <div ref={bottom} />
         </>}
-        {tab === 'activity' && <>
-          {state.notices.length === 0 && <p className="desk-muted">{t('voice.activityEmpty')}</p>}
-          {[...state.notices].reverse().map(notice => <button className="activity-item" key={notice.id} onClick={() => api(`/sessions/${notice.sessionId}/focus`, {}).catch(reportError)}>
-            <Icon name="bell" size={16} /><span><strong>{notice.name}</strong><small>{notice.text}</small></span><time>{time(notice.at)}</time>
-          </button>)}
-        </>}
+        {tab === 'notifications' && <section aria-label={t('notifications.title')}>
+          <p className="notification-hint">{t('notifications.hint')}</p>
+          {state.notifications.length === 0 && <p className="desk-muted">{t('notifications.empty')}</p>}
+          <ul className="notification-list">
+            {state.notifications.map(item => <li key={item.id}>
+              <button className="activity-item" disabled={!state.connected || sending || controlling} onClick={() => void review(item)}>
+                <Icon name="bell" size={16} />
+                <span><strong>{item.ref}. {item.title || t('notifications.untitled')}</strong><small>{item.app} · {t(`notifications.${item.kind}`)}</small></span>
+                {item.at && <time dateTime={item.at}>{time(item.at)}</time>}
+              </button>
+            </li>)}
+          </ul>
+          {!!state.notices.length && <details className="notification-recent"><summary>{t('voice.tabActivity')}</summary>
+            {[...state.notices].reverse().map(notice => <button className="activity-item" key={notice.id} onClick={() => api(`/sessions/${notice.sessionId}/focus`, {}).catch(reportError)}>
+              <Icon name="bell" size={16} /><span><strong>{notice.name}</strong><small>{notice.text}</small></span><time>{time(notice.at)}</time>
+            </button>)}
+          </details>}
+        </section>}
       </div>
       {live.error && <div className="voice-error" role="alert"><span>{serviceMessage(live.error)}</span><button className="desk-icon" aria-label={t('voice.dismissError')} onClick={() => liveVoice.dismissError()}><Icon name="close" size={14} /></button></div>}
       {!live.audible && <button className="desk-secondary" onClick={() => liveVoice.enablePlayback()}>{t('voice.enableSpeaker')}</button>}
       {otherVoice && <div className="voice-hint">{t('voice.activeElsewhere', { surface: otherSurface })}</div>}
-      <div hidden={tab !== 'conversation'}><MakComposer key={conversationId} connected={state.connected} sending={sending || controlling} onSend={send} /></div>
+      <div hidden={tab !== 'conversation'}><MakComposer key={conversationId} connected={state.connected} sending={sending || controlling} onSend={send} inputRef={composer} /></div>
     </section>
     <div className="voice-controls">
       <button className="voice-nose" title={active ? t('voice.stopVoiceTitle') : t('voice.talkToBento')} aria-label={active ? t('voice.stopVoiceAria') : t('voice.startVoiceAria')} aria-pressed={active} onClick={toggle} disabled={!!otherVoice || !state.connected || controlling || closing}>
@@ -138,7 +165,7 @@ export default function VoiceDock() {
         <span className="voice-label">{listening ? t('voice.listening') : connecting ? t('voice.connectingShort') : closing ? t('voice.finishingShort') : t('voice.talkToBento')}</span>
         {listening && <div className="voice-wave" aria-hidden="true"><i /><i /><i /><i /></div>}
       </button>
-      <button className={`voice-caption-toggle ${panel ? 'selected' : ''}`} title={panel ? t('voice.hideConversation') : t('voice.conversationAndActivity')} onClick={() => setPanel(value => !value)} aria-label={t('voice.toggleConversation')}><Icon name="chats" size={17} />{state.notices.some(notice => state.sessions.find(item => item.id === notice.sessionId)?.attention) && <i />}</button>
+      <button className={`voice-caption-toggle ${panel ? 'selected' : ''}`} title={panel ? t('voice.hideConversation') : t('voice.conversationAndActivity')} onClick={() => setPanel(value => !value)} aria-label={t('voice.toggleConversation')} aria-description={state.notifications.length ? t('notifications.badge', { count: state.notifications.length }) : undefined}><Icon name="chats" size={17} />{state.notifications.length > 0 && <span className="voice-notification-count" aria-hidden="true">{state.notifications.length > 99 ? '99+' : state.notifications.length}</span>}</button>
     </div>
   </div>
 }

@@ -60,16 +60,14 @@ fn open_browser(url: &tauri::Url) -> Result<(), String> {
 
 pub fn reveal_path(path: &str) -> Result<(), String> {
     use std::path::Path;
-    use std::process::Command;
     let target = Path::new(path);
     #[cfg(windows)]
     {
-        let mut command = Command::new("explorer.exe");
-        if target.is_dir() { command.arg(target); } else { command.arg(format!("/select,{}", target.display())); }
-        command.spawn().map(|_| ()).map_err(|error| format!("Could not open Explorer: {error}"))
+        crate::windows_reveal::reveal(target)
     }
     #[cfg(not(windows))]
     {
+        use std::process::Command;
         // Finder can select the file itself; xdg-open can only open its folder.
         if cfg!(target_os = "macos") && (!target.is_dir() || is_package(target)) {
             return spawn_reaped(Command::new("open").arg("-R").arg(target)).map_err(|error| format!("Could not open Finder: {error}"));
