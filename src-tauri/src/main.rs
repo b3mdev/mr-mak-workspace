@@ -17,6 +17,8 @@ mod window_identity;
 #[cfg(windows)]
 mod win_key;
 #[cfg(windows)]
+mod windows_reveal;
+#[cfg(windows)]
 mod browseros_split;
 #[cfg(target_os = "macos")]
 mod mac_key;
@@ -509,7 +511,17 @@ fn main() {
                                 });
                             }
                         },
-                        "reveal" => { if let Some(file) = event["path"].as_str() { let _ = external_links::reveal_path(file); } },
+                        "reveal" => {
+                            if let Some(file) = event["path"].as_str() {
+                                let file = file.to_owned();
+                                std::thread::spawn(move || {
+                                    if let Err(error) = external_links::reveal_path(&file) {
+                                        rfd::MessageDialog::new().set_title("Could not show the item")
+                                            .set_description(error).set_level(rfd::MessageLevel::Error).show();
+                                    }
+                                });
+                            }
+                        },
                         _ => {}
                     }
                 }

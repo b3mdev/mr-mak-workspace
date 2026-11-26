@@ -28,6 +28,7 @@ import { MobileGateway } from './mobile.mjs';
 import { ConversationTranscripts } from './mobile-transcript.mjs';
 import { ConversationMedia } from './conversation-media.mjs';
 import { ChatSkills } from './chat-skills.mjs';
+import { localPath } from './local-path.mjs';
 import { releaseConversation } from './conversation-transfer.mjs';
 import { projectKey, recentProjects } from './recent-projects.mjs';
 import { projectGallery } from './project-gallery.mjs';
@@ -343,8 +344,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'POST' && url.pathname === '/api/preview/show') {
           // A link in a chat may be relative to that chat's working folder.
           const base = typeof data.sessionId === 'string' ? sessions.get(data.sessionId).cwd : repo;
-          if (typeof data.path !== 'string' || !data.path.trim() || /[\x00-\x1f]/.test(data.path)) throw new Error('Choose a local file or folder.');
-          const target = await realpath(path.resolve(base, data.path));
+          const target = await localPath(base, data.path);
           if ((await stat(target)).isDirectory()) { native({ type: 'reveal', path: target }); return json(response, 200, { shown: 'folder', path: target }); }
           const preview = await files.preview(target); show('workspace', { preview });
           return json(response, 200, { shown: 'preview', path: preview.path });
@@ -520,7 +520,8 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
           native({ type: 'window', action: data.action, window: data.window, value: !!data.value }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/reveal') {
-          const file = await realpath(path.resolve(data.path));
+          const base = typeof data.sessionId === 'string' ? sessions.get(data.sessionId).cwd : repo;
+          const file = await localPath(base, data.path);
           native({ type: 'reveal', path: file }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/coordinator') return json(response, 200, await askMak(data));

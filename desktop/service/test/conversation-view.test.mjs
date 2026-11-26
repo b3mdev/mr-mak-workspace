@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createService } from '../server.mjs';
 import { recentProjects } from '../recent-projects.mjs';
 import { answerPrompt, readPrompt, terminalPrompt } from '../terminal-prompt.mjs';
@@ -116,8 +116,12 @@ test('desktop conversation view reads the native transcript, grants its media an
   await mkdir(path.join(repo, 'ui')); await writeFile(path.join(repo, 'ui', 'index.html'), '<html></html>');
   await mkdir(path.join(repo, 'workspace')); await writeFile(path.join(repo, 'workspace', 'workspace.json'), '{"entities":[]}');
   await writeFile(path.join(repo, 'render.png'), png);
+  const deliveryFolder = await mkdtemp(path.join(root, '.cache', 'Entrega acentuada '));
+  const delivery = path.join(deliveryFolder, 'Calçada, céu & pôr do sol #2.psd');
+  await writeFile(delivery, 'Fixture');
+  const nativeEvents = [];
   const home = await claudeHome(t, [repo]);
-  const service = await createService({ repo, uiDir: path.join(repo, 'ui') });
+  const service = await createService({ repo, uiDir: path.join(repo, 'ui'), native: event => nativeEvents.push(event) });
   t.after(() => service.close());
   const request = (route, data) => fetch(service.origin + '/api' + route, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
 
@@ -151,7 +155,22 @@ test('desktop conversation view reads the native transcript, grants its media an
   const shown = await (await request('/preview/show', { path: 'render.png', sessionId: session.id })).json();
   assert.deepEqual(shown, { shown: 'preview', path: path.join(cwd, 'render.png') });
   assert.equal((await (await request('/preview/show', { path: '.', sessionId: session.id })).json()).shown, 'folder');
-  assert.equal((await request('/preview/show', { path: 'missing.txt', sessionId: session.id })).status, 400);
+  const missing = await request('/preview/show', { path: 'missing.txt', sessionId: session.id });
+  assert.equal(missing.status, 404);
+  assert.match((await missing.json()).error, /moved or renamed/);
+  for (const spelling of [delivery.replaceAll('\\', '/'), pathToFileURL(delivery).href]) {
+    const preview = await request('/preview/show', { path: spelling, sessionId: session.id });
+    assert.equal(preview.status, 200);
+    assert.equal((await preview.json()).path, await realpath(delivery));
+    const response = await request('/reveal', { path: spelling, sessionId: session.id });
+    assert.equal(response.status, 200);
+    assert.deepEqual(nativeEvents.at(-1), { type: 'reveal', path: await realpath(delivery) });
+  }
+  const count = nativeEvents.length;
+  const absent = await request('/reveal', { path: pathToFileURL(path.join(deliveryFolder, 'missing.psd')).href });
+  assert.equal(absent.status, 404);
+  assert.match((await absent.json()).error, /moved or renamed/);
+  assert.equal(nativeEvents.length, count);
 
   const speak = await request(`/sessions/${session.id}/speak`, { voice: 'am_michael', text: 'Hello' });
   assert.equal(speak.status, 503); assert.match((await speak.json()).error, /Set up local Read aloud/);

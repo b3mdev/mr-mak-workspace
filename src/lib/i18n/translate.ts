@@ -44,6 +44,8 @@ const serviceToPtBR: Record<string, string> = {
   'This skill file is read-only.': 'Este arquivo da skill é somente leitura.',
   'The skill changed on disk. Reopen the file before saving.': 'A skill mudou no disco. Reabra o arquivo antes de salvar.',
   'Enter skill instructions up to 256 KiB.': 'Escreva instruções para a skill de até 256 KiB.',
+  'Choose a valid local file URL.': 'Escolha um endereço de arquivo local válido.',
+  'The file or folder was not found. It may have been moved or renamed.': 'Não foi possível encontrar o arquivo ou a pasta. Verifique se o item foi movido ou renomeado.',
   'Choose a message to read earlier history.': 'Escolha uma mensagem para ler o histórico anterior.',
   'This conversation has no readable local history.': 'Esta conversa ainda não tem um histórico local legível.',
   'This chat does not have a saved native conversation yet.': 'Este chat ainda não tem uma sessão nativa salva.',
