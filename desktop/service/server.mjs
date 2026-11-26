@@ -5,6 +5,8 @@ import { watch } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { parse as parseEnv } from 'dotenv';
 import { Sessions } from './sessions.mjs';
+import { NotificationCenter, notificationCommand, notificationReplyCaption } from './notification-center.mjs';
+import { blockingScreen, ManagedNotificationSource } from './notification-sources.mjs';
 import { Coordinator, conversationOf, openChatArguments, revisionOf } from './coordinator.mjs';
 import { Files, serveFile } from './files.mjs';
 import { importFile, dragFiles, moveFile, recyclePath, MAX_FILE_BYTES } from './file-transfers.mjs';
@@ -47,7 +49,7 @@ import { defaultUiLanguage, isUiLanguage, resolveUiLanguage } from './language.m
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
-export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions }) {
+export async function createService({ repo, uiDir, stateDir, networkStateDir, token = secret(), native = () => {}, restoreSessions = false, mcpOptions, mobileOptions, codexUsageQuery, chatSkillOptions, notificationSources }) {
   repo = await realpath(repo);
   stateDir ||= path.join(repo, '.mrmak');
   const dictation = mobileOptions?.dictation || new MobileDictation(repo);
@@ -142,6 +144,15 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
     sessions.input(id, attachmentText(verified, session.agent), { coordinator, submit: false });
     return { attached: verified, submitted: false };
   };
+  const notifications = await new NotificationCenter({
+    managed: new ManagedNotificationSource(sessions, async (session, id) => {
+      const transcript = await transcripts.read(session);
+      const last = transcript.messages?.at(-1);
+      return last?.role === 'assistant' && last.id === id ? last.text : '';
+    }),
+    sources: notificationSources, stateDir, settings: () => settings, revision: () => coordinatorConversation.contextRevision,
+    changed: items => broadcast('notifications', { notifications: items }),
+  }).init();
   const coordinator = await new Coordinator({
     repo, stateDir, settings: () => settings,
     context: revision => ({
@@ -155,6 +166,14 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         const target = sessions.get(args.id);
         if (target.agent === 'shell') throw new Error('Use the local shell directly. Bento Workspace can send tasks only to agent chats.');
         if (target.bypass && settings.defaultBypass !== true) throw new Error('This chat uses bypass permissions. Send the task directly, or enable bypass yourself in Settings before using Bento Workspace to control it.');
+      }
+      if (['send_to_chat', 'attach_files'].includes(name)) {
+        const view = await sessions.terminalView(args.id);
+        if (notificationCommand(latestRequest) || notifications.selection?.item.chatId === args.id ||
+          notifications.items.some(item => item.chatId === args.id && ['manual', 'question'].includes(item.kind)) ||
+          blockingScreen(view?.screen)) {
+          throw new Error('Review the notification and use the explicit reply command, or handle it directly in its chat.');
+        }
       }
       switch (name) {
         case 'list_chats': return sessions.active();
@@ -204,7 +223,9 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   }).init();
   const quick = await new QuickActions({ stateDir, workspace, context: () => ({ chats: sessions.active(), route: workspaceRoute }), execute: (...args) => coordinator.execute(...args), completed: operation => broadcast('coordinator-result', { operation }) }).init();
   const operations = () => [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => (a.at || '').localeCompare(b.at || ''));
-  const currentOperations = () => operations().filter(item => conversationOf(item) === coordinatorConversation.conversationId).slice(-30);
+  const currentOperations = () => [...operations(), ...notifications.operations.values()]
+    .filter(item => conversationOf(item) === coordinatorConversation.conversationId)
+    .sort((a, b) => (a.at || '').localeCompare(b.at || '')).slice(-30);
   const currentVoiceHistory = () => voiceHistory.filter(item => conversationOf(item) === coordinatorConversation.conversationId);
   const conversationState = () => ({ coordinatorConversation, operations: currentOperations(), voiceHistory: currentVoiceHistory(), voiceOwner, state: coordinator.state });
   const releaseVoice = () => {
@@ -216,13 +237,23 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
       throw Object.assign(new Error('The coordinator context changed. Send the request again if needed.'), { status: 409 });
     }
   };
-  const askMak = async data => {
+  const notifyOperation = operation => {
+    const { voiceResult: _voiceResult, ...display } = operation;
+    broadcast('coordinator-result', { operation: display });
+  };
+  const askMak = async (data, reviewId) => {
     checkRevision(data);
     const request = { ...data, ...coordinatorConversation };
     const signal = coordinator.run.signal;
     if (coordinator.operationPromises.has(data.id) || coordinator.operations.has(data.id)) return coordinator.ask(request);
+    const notification = notifications.ask(request, signal, reviewId, notifyOperation);
+    if (notification) return notification;
     const images = await attachments.coordinatorImages(data.images);
     signal.throwIfAborted();
+    if (typeof request.conversation === 'string') {
+      request.conversation = request.conversation.split(/(?=\n(?:user|assistant): )/).map(caption =>
+        caption.replace(/^(\n?user: )([\s\S]*)$/, (_, prefix, text) => prefix + notificationReplyCaption(text, '[Notification reply]'))).join('');
+    }
     if (images.length) return coordinator.ask({ ...request, images });
     const result = await quick.ask(request, signal);
     if (result) return result;
@@ -302,7 +333,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (method === 'GET' && url.pathname === '/api/bootstrap') {
           const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
           const { operations, voiceHistory } = conversationState();
-          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, coordinatorConversation, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations });
+          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, notifications: notifications.publicItems(), coordinator: coordinator.state, coordinatorConversation, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations });
         }
         if (method === 'GET' && url.pathname === '/api/workspace') return json(response, 200, await registry());
         if (method === 'GET' && url.pathname === '/api/workspace/projects') return json(response, 200, await loadGallery());
@@ -525,12 +556,17 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
           native({ type: 'reveal', path: file }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/coordinator') return json(response, 200, await askMak(data));
+        if (method === 'POST' && url.pathname === '/api/notifications/review') {
+          if (typeof data.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(data.itemId)) throw new Error('Choose a notification.');
+          return json(response, 200, await askMak(data, data.itemId));
+        }
         if (method === 'POST' && url.pathname === '/api/coordinator/prepare') { await coordinator.start(); return json(response, 200, { ready: true, model: coordinator.model }); }
         if (method === 'GET' && url.pathname === '/api/coordinator/context') return json(response, 200, await library.overview({ excerpts: true }));
         if (method === 'POST' && url.pathname === '/api/coordinator/conversation') {
           checkRevision(data);
           if (!['stop', 'reset', 'new'].includes(data.action)) throw new Error('Choose a coordinator conversation action.');
           coordinator.cancel();
+          notifications.reset();
           if (data.action !== 'stop') {
             const contextRevision = coordinatorConversation.contextRevision + 1;
             coordinatorConversation = { contextRevision, conversationId: data.action === 'new' ? contextRevision : coordinatorConversation.conversationId };
@@ -542,7 +578,9 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         }
         if (method === 'POST' && url.pathname === '/api/live/transcript') {
           if (typeof data.id !== 'string' || data.id.length > 200 || !Array.isArray(data.captions)) throw new Error('A voice session and captions are required.');
-          const captions = data.captions.slice(-50).filter(item => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string').map(item => ({ role: item.role, text: item.text.slice(0, 1000), start: Number(item.start) || 0, end: Number(item.end) || 0 }));
+          const privateReply = settings.uiLanguage === 'pt-BR' ? '[Resposta a uma notificação]' : '[Notification reply]';
+          const captions = data.captions.slice(-50).filter(item => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string')
+            .map(item => ({ role: item.role, text: (item.role === 'user' ? notificationReplyCaption(item.text, privateReply) : item.text).slice(0, 1000), start: Number(item.start) || 0, end: Number(item.end) || 0 }));
           const conversationId = Number.isSafeInteger(data.conversationId) ? data.conversationId : coordinatorConversation.conversationId;
           const transcript = { id: data.id, conversationId, at: new Date().toISOString(), captions };
           voiceHistory = [...voiceHistory.filter(item => item.id !== data.id || conversationOf(item) !== conversationId), transcript].slice(-12);
@@ -611,7 +649,7 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
         if (!ws.authenticated) {
           if (message.type !== 'auth' || !equalSecret(message.token, token)) return ws.close(1008, 'Authentication failed');
           ws.authenticated = true; ws.clientId = message.clientId; ws.surface = message.surface; clients.add(ws); clearTimeout(authTimer);
-          send(ws, 'connected', { sessions: sessions.list(), selectedId, ...conversationState() }); return;
+          send(ws, 'connected', { sessions: sessions.list(), selectedId, notifications: notifications.publicItems(), ...conversationState() }); return;
         }
         if (message.type === 'subscribe') {
           ws.sessionId = message.id;
@@ -632,12 +670,12 @@ export async function createService({ repo, uiDir, stateDir, networkStateDir, to
   try { watcher = watch(path.join(repo, 'workspace', 'workspace.json'), () => broadcast('workspace-changed', {})); watcher.on('error', () => {}); } catch { /* Registry may be created after first setup. */ }
   const restoreTimer = restoreSessions ? setTimeout(() => sessions.restore().catch(error => sessions.emit('service-error', error)), 100) : null;
   return {
-    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, cards, files, projects, knowledge, integrations, mobile,
+    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, notifications, workspace, cards, files, projects, knowledge, integrations, mobile,
     urls: { workspace: `${origin}/?desktop=1&surface=workspace&token=${token}`, chats: `${origin}/?desktop=1&surface=chats&token=${token}` },
       nativeMessage: event => nativeSettings.receive(event),
       async close() {
         if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
-      watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
+      watcher?.close(); clearTimeout(restoreTimer); releaseVoice(); await coordinator.close(); await notifications.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
       dictation.close(); await network.close(); await mobile.close();
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();

@@ -10,10 +10,11 @@ import { useT } from '../lib/i18n'
 
 const maxImages = 12
 
-export default function MakComposer({ connected, sending, onSend }: {
+export default function MakComposer({ connected, sending, onSend, inputRef }: {
   connected: boolean
   sending: boolean
   onSend: (text: string, images: string[]) => Promise<void>
+  inputRef?: React.Ref<HTMLTextAreaElement>
 }) {
   const { t, serviceMessage } = useT()
   const [voiceBusy, setVoiceBusy] = useState(false)
@@ -63,7 +64,7 @@ export default function MakComposer({ connected, sending, onSend }: {
     <form className="voice-compose" onSubmit={send}>
       <input ref={picker} type="file" hidden multiple accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" aria-label={t('voice.chooseImagesAria')} onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; void attach(files) }} />
       <button type="button" title={t('voice.attachImages')} aria-label={t('voice.attachImages')} disabled={disabled} onClick={() => picker.current?.click()}><Icon name="attach" size={17} /></button>
-      <textarea value={draft} rows={2} onChange={event => setDraft(event.target.value)} placeholder={t('voice.composerPlaceholder')} aria-label={t('voice.composerAria')} aria-describedby="mak-compose-hint" disabled={disabled}
+      <textarea ref={inputRef} value={draft} rows={2} onChange={event => setDraft(event.target.value)} placeholder={t('voice.composerPlaceholder')} aria-label={t('voice.composerAria')} aria-describedby="mak-compose-hint" disabled={disabled}
         onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void attach(files) } }}
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
       <VoiceInput id="desktop-mak" connected={connected} disabled={disabled} config={dictation} hotkey transcriber={transcribeDesktopAudio} onBusy={setVoiceBusy} onText={(text, recordingId) => { if (voiceIds.current.has(recordingId)) return; voiceIds.current.add(recordingId); setDraft(current => current ? `${current}\n${text}` : text) }} />

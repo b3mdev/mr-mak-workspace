@@ -218,7 +218,8 @@ try {
   await chats.getByRole('button', { name: 'Alternar conversa', exact: true }).click();
   await expect(chats.locator('.voice-panel')).toBeVisible();
   await expect(chats.locator('.voice-tabs')).toContainText('Conversa');
-  await expect(chats.locator('.voice-tabs')).toContainText('Atividade');
+  await chats.getByRole('button', { name: /^Notificações/ }).click();
+  await expect(chats.getByRole('region', { name: 'Notificações' })).toBeVisible();
   await chats.getByRole('button', { name: 'Alternar conversa', exact: true }).click();
 
   const chatsOverflow = await chats.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

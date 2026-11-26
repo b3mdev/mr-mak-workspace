@@ -19,7 +19,7 @@ if (isDesktop && token) {
 const listeners = new Set<() => void>()
 const events = new Set<(event: ServiceEvent) => void>()
 let state: DesktopState = {
-  ready: false, connected: false, error: null, repo: '', contentBase: '', agents: [], sessions: [], selectedId: null, notices: [],
+  ready: false, connected: false, error: null, repo: '', contentBase: '', agents: [], sessions: [], selectedId: null, notices: [], notifications: [],
   settings: { defaultAgent: 'codex', defaultBypass: false }, coordinator: 'idle', coordinatorConversation: { conversationId: 0, contextRevision: 0 }, voice: { configured: false, owner: null }, operations: [], preview: null, voiceHistory: [],
 }
 let socket: WebSocket | null = null
@@ -118,6 +118,7 @@ function connect() {
     const event = JSON.parse(data) as ServiceEvent
     if (event.type === 'connected' || event.type === 'coordinator-conversation') applyCoordinatorConversation(event, event.type === 'connected')
     if (event.type === 'connected') update({ connected: true, sessions: event.sessions || state.sessions, selectedId: event.selectedId ?? state.selectedId, coordinator: event.state || state.coordinator, error: null })
+    if (event.notifications) update({ notifications: event.notifications })
     if (event.type === 'selection') update({ selectedId: event.selectedId || null })
     if (event.type === 'session' && event.session) {
       const next = event.session

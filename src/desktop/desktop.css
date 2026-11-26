@@ -296,3 +296,13 @@
 .model-menu-option:disabled,.model-menu-efforts button:disabled,.model-menu-action:disabled{cursor:default;opacity:.55}
 .model-menu-note{margin:0;font-size:9.5px;line-height:1.45;color:var(--text-dim)}
 .model-menu-action{padding:6px 8px;border:1px solid color-mix(in srgb,var(--pink) 33%,transparent);border-radius:7px;background:color-mix(in srgb,var(--pink) 10%,transparent);color:var(--text-bright);font:inherit;font-size:10.5px;cursor:pointer}
+
+.voice-caption-toggle:has(.voice-notification-count){opacity:1;transform:none}
+.voice-notification-count{position:absolute;top:-4px;right:-5px;min-width:15px;padding:1px 3px;border-radius:9px;background:var(--amber);color:#21170d;font:700 9px/13px var(--font-ui);text-align:center}
+.notification-list{list-style:none;margin:0;padding:0}
+.notification-hint,.notification-recent,.notification-detail{font-size:11px;line-height:1.55;color:var(--text-dim)}
+.notification-list button:focus-visible{outline:2px solid var(--pink);outline-offset:-2px;border-radius:4px}
+.notification-recent{margin:12px 0 5px}
+.notification-recent summary{cursor:pointer}
+.notification-detail{margin:0 0 10px 0;padding:6px 10px;border-left:2px solid var(--amber);overflow-wrap:anywhere;white-space:pre-wrap}
+.notification-detail small{display:block;color:var(--text);font-weight:600}

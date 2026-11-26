@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createService } from '../server.mjs';
 import { launchBrowser } from './browser.mjs';
+import { addNotificationChat, permission } from './notification-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 await mkdir(path.join(root, '.cache'), { recursive: true });
@@ -14,7 +15,10 @@ const uiDir = path.join(repo, 'ui');
 await cp(path.join(root, 'dist'), uiDir, { recursive: true });
 for (const name of ['bento-icon-32.png', 'bento-icon-192.png', 'bento-chats-32.png', 'bento-chats-192.png']) await copyFile(path.join(root, 'public/assets', name), path.join(uiDir, 'assets', name)).catch(() => {});
 await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
-const service = await createService({ repo, uiDir, mcpOptions: { home: repo, env: {} } });
+let externalEvents = [], refreshExternal = () => {};
+const external = { id: 'synthetic-planner', enabled: true, snapshot: () => externalEvents,
+  subscribe(refresh) { refreshExternal = refresh; return () => {}; } };
+const service = await createService({ repo, uiDir, mcpOptions: { home: repo, env: {} }, notificationSources: [external] });
 const requests = [];
 let fail = false;
 let stalled;
@@ -230,17 +234,105 @@ try {
   await page.screenshot({ path: path.join(repo, 'local-context.png') });
 
   const chats = await browser.newPage();
+  chats.setDefaultTimeout(10000);
+  chats.on('pageerror', error => errors.push(error.message));
   await chats.goto(service.urls.chats);
   await chats.getByRole('button', { name: 'Toggle conversation' }).click();
   assert.ok(await chats.locator('.mak-exchange').count());
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByText('New conversation ready.').waitFor();
   await chats.locator('.mak-exchange').first().waitFor({ state: 'detached' });
-  await chats.close();
   assert.equal(await page.locator('.mak-exchange').count(), 0);
   assert.equal(await input.inputValue(), '');
   assert.equal(await page.locator('.previous-voice').count(), 0);
+
+  // Keep one Live connection open while text and speech route two replies.
+  const a = await addNotificationChat(service, 'codex', 'Atlas Colors');
+  const b = await addNotificationChat(service, 'claude', 'Atlas Layout');
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+  await page.waitForFunction(() => window.fixtureVoice.channel?.readyState === 'open');
+  await page.evaluate(() => {
+    window.fixtureVoice.sent = [];
+    window.fixtureVoice.emit({ type: 'session.started' });
+  });
+  const token = new URL(service.urls.workspace).searchParams.get('token');
+  const bootstrap = () => fetch(service.origin + '/api/bootstrap', { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+  const firstConversation = (await bootstrap()).coordinatorConversation;
+  const callCount = requests.length;
+  a.complete('question-a', 'Should I paint the border blue?');
+  b.complete('result-b', 'The draft layout is ready.');
+  externalEvents = [{ key: 'fixture-id', app: 'Synthetic Planner', title: 'Offline Render', kind: 'question' }];
+  refreshExternal();
+  await page.waitForFunction(() => document.querySelector('.voice-caption-toggle')?.getAttribute('aria-description') === 'Pending notifications: 3');
+  const notificationsTab = owner => owner.getByRole('button', { name: /^Notifications/ });
+  await notificationsTab(chats).click();
+  await chats.getByRole('button', { name: /Offline Render.*Synthetic Planner.*Read-only/ }).waitFor();
+  await notificationsTab(page).click();
+  await page.getByRole('button', { name: /Atlas Colors.*Codex.*Agent question/ }).waitFor();
+  await page.screenshot({ path: path.join(repo, 'notifications.png') });
+  assert.equal(await page.evaluate(() => window.fixtureVoice.sent.filter(item => item.type === 'session.commentary.append').length), 0);
+  await page.getByRole('button', { name: /Atlas Colors.*Codex.*Agent question/ }).click();
+  await page.getByText('Should I paint the border blue?', { exact: true }).waitFor();
+  const command = async (text, expected) => {
+    await input.fill(text); await input.press('Enter');
+    await page.locator('.mak-exchange').last().getByText(expected, { exact: false }).waitFor();
+    await page.waitForFunction(() => document.querySelector('.voice-compose textarea')?.value === '');
+  };
+  let voiceOffset = 0;
+  const speak = async (text, id, expected) => {
+    await page.evaluate(({ text, id, start }) => {
+      window.fixtureVoice.emit({ type: 'session.input_transcript.delta', delta: text, start_ms: start });
+      window.fixtureVoice.emit({ type: 'session.delegation.created', delegation: { id } });
+    }, { text, id, start: voiceOffset += 2500 });
+    await page.waitForFunction(({ id, expected }) => window.fixtureVoice.sent.some(item =>
+      item.type === 'session.commentary.append' && item.delegation_id === id && item.content.includes(expected)), { id, expected });
+  };
+  await command('List notifications', '3 pending notifications');
+  await speak('List notifications', 'fixture-list', 'Atlas Layout');
+  await speak('Review notification Atlas', 'fixture-ambiguous', 'Which notification');
+  await speak('Yes', 'fixture-no-selection', 'To reply');
+  assert.deepEqual([a.writes, b.writes], [[], []]);
+  await command('Review notification Atlas Colors', 'Atlas Colors · Codex');
+  await command('Send reply to Atlas Colors: Use blue on the border.', 'Reply submitted to the terminal');
+  assert.deepEqual(a.writes, ['\x1b[200~Use blue on the border.\x1b[201~', '\r']);
+  assert.deepEqual(b.writes, []);
+
+  b.complete('question-b', 'Should I align the title left?');
+  await speak('Review notification Atlas Layout', 'fixture-review-b', 'Atlas Layout · Claude Code');
+  await page.getByText('Should I align the title left?', { exact: true }).waitFor();
+  assert.ok(await page.evaluate(() => window.fixtureVoice.sent.every(item => !item.content?.includes('Should I align'))));
+  await speak('Send reply to Atlas Layout saying Align the title left.', 'fixture-send-b', 'Reply submitted to the terminal');
+  await page.evaluate(() => window.fixtureVoice.emit({ type: 'session.delegation.created', delegation: { id: 'fixture-send-b' } }));
+  assert.deepEqual(b.writes, ['\x1b[200~Align the title left.\x1b[201~', '\r']);
+  assert.equal(a.writes.length, 2);
+
+  await b.screen(permission);
+  await chats.getByRole('button', { name: /Atlas Layout.*Manual attention/ }).waitFor();
+  await speak('Review notification Atlas Layout', 'fixture-manual', 'Manual attention');
+  await speak('Send reply to Atlas Layout saying Yes.', 'fixture-blocked', 'Manual attention');
+  assert.equal(b.writes.length, 2);
+
+  await notificationsTab(page).click();
+  await page.getByRole('button', { name: /Offline Render.*Read-only/ }).click();
+  await page.locator('.mak-exchange').last().getByText('Offline Render · Synthetic Planner — external notice', { exact: false }).waitFor();
+  await chats.getByRole('button', { name: /Offline Render.*Read-only/ }).waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.voice-dock').getAttribute('data-voice-status'), 'live');
+  assert.equal(requests.length, callCount, 'notification commands are local');
+  assert.deepEqual((await bootstrap()).coordinatorConversation, firstConversation);
+  await page.waitForFunction(async token => {
+    const response = await fetch('/api/bootstrap', { headers: { Authorization: 'Bearer ' + token } });
+    const state = await response.json();
+    return state.voiceHistory.some(history => history.captions.some(caption => caption.text === '[Notification reply]'));
+  }, token);
+  assert.ok(!(await readFile(path.join(repo, '.mrmak/voice-transcripts.json'), 'utf8')).includes('Align the title left.'));
+  await page.evaluate(async token => {
+    const response = await fetch('/api/settings', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ uiLanguage: 'pt-BR' }) });
+    if (!response.ok) throw new Error('Could not change fixture interface language');
+  }, token);
+  await chats.getByRole('button', { name: /^Notificações/ }).waitFor();
+  await speak('Liste as notificações', 'fixture-list-pt', 'atenção manual');
+  await chats.close();
   assert.deepEqual(errors, []);
-  console.log('Talk to Bento: text, attachments, voice append limits, recovery, local context and conversation sync passed.');
+  console.log('Talk to Bento: text, attachments, voice append limits, recovery, local context and conversation sync, and notification replies across text and simulated Live passed.');
   console.log(`Screenshots: ${repo}`);
 } finally { await browser?.close(); await service.close(); }
